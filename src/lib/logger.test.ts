@@ -83,9 +83,9 @@ describe('resolveLogDir', () => {
 });
 
 describe('resolveLogLevel', () => {
-  it('defaults to info', () => {
-    expect(resolveLogLevel({ verbose: false })).toEqual({ level: 'info' });
-    expect(resolveLogLevel({ verbose: false, envValue: '' })).toEqual({ level: 'info' });
+  it('defaults to off', () => {
+    expect(resolveLogLevel({ verbose: false })).toEqual({ level: 'off' });
+    expect(resolveLogLevel({ verbose: false, envValue: '' })).toEqual({ level: 'off' });
   });
 
   it('honours every documented SLACKCLI_LOG_LEVEL value, case-insensitively', () => {
@@ -105,8 +105,8 @@ describe('resolveLogLevel', () => {
     expect(resolveLogLevel({ verbose: true, envValue: 'trace' }).level).toBe('trace');
   });
 
-  it('falls back to info and reports an unknown value', () => {
-    expect(resolveLogLevel({ verbose: false, envValue: 'loud' })).toEqual({ level: 'info', invalidValue: 'loud' });
+  it('falls back to off and reports an unknown value', () => {
+    expect(resolveLogLevel({ verbose: false, envValue: 'loud' })).toEqual({ level: 'off', invalidValue: 'loud' });
     expect(resolveLogLevel({ verbose: true, envValue: 'loud' })).toEqual({ level: 'debug', invalidValue: 'loud' });
   });
 });
@@ -423,7 +423,7 @@ describe('installUsageErrorLogging', () => {
     savedEnv = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]));
     logDir = join(tmp, 'logs');
     process.env.SLACKCLI_LOG_DIR = logDir;
-    delete process.env.SLACKCLI_LOG_LEVEL;
+    process.env.SLACKCLI_LOG_LEVEL = 'info';
   });
 
   afterEach(() => {
@@ -584,7 +584,7 @@ describe('process integration', () => {
     const script = join(tmp, 'exit.ts');
     writeFileSync(script, `
       import { configureLogging } from ${JSON.stringify(join(root, 'src/lib/logger.ts'))};
-      import { getLogger } from '@logtape/logtape';
+      import { getLogger } from ${JSON.stringify(import.meta.resolve('@logtape/logtape'))};
       configureLogging({ level: 'info', verbose: false, dir: ${JSON.stringify(dir)} });
       getLogger(['slackcli', 'x']).error('last words');
       process.exit(1);
@@ -626,8 +626,8 @@ describe('process integration', () => {
     ).stderr.toString();
 
     const quiet = run([]);
-    expect(quiet.match(/Ignoring SLACKCLI_LOG_LEVEL="loud"/g)).toHaveLength(1);
-    expect(quiet).toContain('Using info.');
+    expect(quiet.match(/Ignoring invalid SLACKCLI_LOG_LEVEL/g)).toHaveLength(1);
+    expect(quiet).toContain('Using off.');
     expect(run(['-v'])).toContain('Using debug.');
   });
 
@@ -641,7 +641,7 @@ describe('process integration', () => {
 
     const run = (args: string[], dir: string) => Bun.spawnSync(
       [process.execPath, 'run', join(root, 'src/index.ts'), ...args],
-      { cwd: root, env: { ...process.env, HOME: tmp, SLACKCLI_LOG_DIR: dir, SLACKCLI_LOG_LEVEL: '' } },
+      { cwd: root, env: { ...process.env, HOME: tmp, SLACKCLI_LOG_DIR: dir, SLACKCLI_LOG_LEVEL: 'info' } },
     );
 
     for (const group of groups) {
@@ -663,11 +663,11 @@ describe('process integration', () => {
     });
   }, 30_000);
 
-  it('logs a usage error with unchanged stderr and exit code, and help/version write nothing', () => {
+  it('logs a usage error with private stderr and the same exit code, and help/version write nothing', () => {
     const dir = join(tmp, 'logs');
     const run = (args: string[]) => Bun.spawnSync(
       [process.execPath, 'run', join(root, 'src/index.ts'), ...args],
-      { cwd: root, env: { ...process.env, HOME: tmp, SLACKCLI_LOG_DIR: dir, SLACKCLI_LOG_LEVEL: '' } },
+      { cwd: root, env: { ...process.env, HOME: tmp, SLACKCLI_LOG_DIR: dir, SLACKCLI_LOG_LEVEL: 'info' } },
     );
 
     for (const args of [['--help'], ['messages', '--help'], ['help', 'messages'], ['--version']]) {
@@ -678,7 +678,7 @@ describe('process integration', () => {
     const result = run(['messages', 'send', '--recipient-id', 'C0000000000', '--message', 'x', '--yes']);
     expect(result.exitCode).toBe(1);
     expect(result.stdout.toString()).toBe('');
-    expect(result.stderr.toString()).toBe("error: unknown option '--yes'\n");
+    expect(result.stderr.toString()).toBe("error: Invalid command arguments. See --help.\n");
     const records = readLines(join(dir, LOG_FILE_NAME));
     expect(records.map((r) => r.properties.event)).toEqual(['session_start', 'usage_error']);
     expect(records[0]!.properties).toMatchObject({ command: 'messages send' });

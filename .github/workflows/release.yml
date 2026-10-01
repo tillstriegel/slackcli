@@ -13,6 +13,7 @@ jobs:
   # Fail fast if the pushed tag disagrees with package.json, so we never
   # release binaries whose baked-in version drifts from the source tree (#81).
   verify-version:
+    if: github.repository == 'shaharia-lab/slackcli'
     permissions:
       contents: read
     runs-on: ubuntu-latest
@@ -32,6 +33,7 @@ jobs:
           echo "Tag v${TAG_VERSION} matches package.json version ${PKG_VERSION}"
 
   build:
+    if: github.repository == 'shaharia-lab/slackcli'
     needs: verify-version
     permissions:
       contents: read
@@ -110,6 +112,7 @@ jobs:
           path: dist/${{ matrix.artifact }}
 
   release:
+    if: github.repository == 'shaharia-lab/slackcli'
     needs: build
     runs-on: ubuntu-latest
     # Only this job writes to the repo (creating the GitHub Release).
@@ -167,6 +170,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   update-homebrew:
+    if: github.repository == 'shaharia-lab/slackcli'
     name: Update Homebrew Formula
     needs: release
     runs-on: ubuntu-latest

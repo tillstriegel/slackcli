@@ -185,11 +185,11 @@ describe('extractWorkspacesFromLocalConfig', () => {
     expect(extractWorkspacesFromLocalConfig(raw)).toEqual([]);
   });
 
-  it('reduces a team url carrying a path to its origin', () => {
+  it('refuses a team url carrying a path', () => {
     const raw = JSON.stringify({
       teams: { T1: { id: 'T1', url: 'https://alpha.slack.com/messages/C1', token: 'xoxc-a' } },
     });
-    expect(extractWorkspacesFromLocalConfig(raw)[0].workspaceUrl).toBe('https://alpha.slack.com');
+    expect(extractWorkspacesFromLocalConfig(raw)).toEqual([]);
   });
 
   // Undocumented client state: every one of these shapes must cost us the
@@ -286,7 +286,6 @@ describe('isSlackWorkspaceUrl', () => {
   it.each([
     'https://alpha.slack.com',
     'https://myorg.enterprise.slack.com',
-    'https://slack.com',
   ])('accepts %s', (url) => {
     expect(isSlackWorkspaceUrl(url)).toBe(true);
   });
@@ -1033,4 +1032,10 @@ describe('captureSlackTokens logging', () => {
     const failure = records.find((r) => r.message.join('').startsWith('Token capture failed'));
     expect(failure?.properties.reason).toBe('browser_closed');
   });
+});
+
+it.each(['https://user@team.slack.com/', 'https://team%2eslack.com/', 'https://team.slack.com:444',
+  'https://team.slack.com/?query=1', 'https://team.slack.com/#fragment'])('refuses unsafe raw localConfig origin %s', url => {
+  const raw = JSON.stringify({ teams: { T1: { url, token: 'xoxc-FAKE' } } });
+  expect(extractWorkspacesFromLocalConfig(raw)).toEqual([]);
 });

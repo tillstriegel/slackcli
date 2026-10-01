@@ -22,8 +22,10 @@ describe('resolveSecretBackend', () => {
     expect(resolveSecretBackend('file', 'darwin')).toBe('file');
   });
 
-  it('accepts "keychain" only on darwin', () => {
-    expect(resolveSecretBackend('keychain', 'darwin')).toBe('keychain');
+  it('rejects Keychain writes even on macOS', () => {
+    const original = process.exit;
+    process.exit = (() => { throw new Error('exit'); }) as never;
+    try { expect(() => resolveSecretBackend('keychain', 'darwin')).toThrow('exit'); } finally { process.exit = original; }
   });
 
   it('exits with a clear message for an unrecognised value', () => {

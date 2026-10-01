@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Privacy fork (0.13.0-till.1)
+- Accept rotating standard access tokens without changing their bytes or bot/user type; keep refresh and browser tokens out of standard login.
+- Block SDK compound and legacy file upload helpers before file access; retain the validated external-upload path.
+- Point the user-guide quickstart to reviewed fork builds and local stdin authentication.
+- Enforce shared HTTPS Slack origin, method, upload and download policies; refuse credentialed redirects and ambient proxy settings.
+- Add local stdin credential entry, hide all parsed credential values, refuse interactive secret paste and disable Keychain writes.
+- Disable automatic browser login, upstream updates and background release checks; make logs opt-in.
+- Pin Axios 1.20.0 and make unit-test failures block CI. Gate inherited publication and Sonar jobs to the original repository.
+- This local fork customization has no upstream issue or PR. See PRIVACY.md for limits and verification scope.
+
+
 ### Fixed
 - **Browser-session workspaces no longer fail on the first rate limit**: a `HTTP error! status: 429` from Slack is now retried after the `Retry-After` delay, as it already was for app tokens, instead of failing the command (#315)
   - Every call is retried on a 429, including sends: Slack rejected the request, so it cannot be applied twice

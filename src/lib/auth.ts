@@ -1,6 +1,6 @@
+import { canonicalWorkspaceOrigin } from './slack-url-policy.ts';
 import { getLogger } from '@logtape/logtape';
 import { SlackClient } from './slack-client.ts';
-import { errorMessageForLog } from './tildify.ts';
 import { addWorkspace, getWorkspace } from './workspaces.ts';
 import type {
   StandardAuthConfig,
@@ -9,14 +9,6 @@ import type {
   SecretBackend,
 } from '../types/index.ts';
 import { extractSlackWorkspaceName } from './curl-parser.ts';
-import {
-  captureSlackTokens,
-  openBrowserSession,
-  SLACK_CLIENT_URL,
-  isSlackWorkspaceUrl,
-  type CaptureFailure,
-  type BrowserSessionFailure,
-} from './browser-auth.ts';
 
 const logger = getLogger(['slackcli', 'auth']);
 
@@ -29,9 +21,9 @@ function logAuthenticated(authType: WorkspaceConfig['auth_type'], workspaceId: s
 }
 
 function logAuthFailed(authType: WorkspaceConfig['auth_type'], error: unknown): void {
-  logger.warn('{auth_type} authentication failed: {error}', {
+  logger.warn('{auth_type} authentication failed', {
     auth_type: authType,
-    error: errorMessageForLog(error),
+    error_name: error instanceof Error ? error.name : 'UnknownError',
   });
 }
 
@@ -55,7 +47,7 @@ export async function authenticateStandard(
     workspace_name: workspaceName,
     auth_type: 'standard',
     token,
-    token_type: token.startsWith('xoxb-') ? 'bot' : 'user',
+    token_type: /^(?:xoxe\.)?xoxb-/.test(token) ? 'bot' : 'user',
   };
 
   const client = new SlackClient(tempConfig);
@@ -91,6 +83,7 @@ export async function authenticateBrowser(
   profile?: string,
   secretBackend: SecretBackend = 'file'
 ): Promise<AuthResult> {
+  workspaceUrl = canonicalWorkspaceOrigin(workspaceUrl);
   // Extract workspace name from URL if not provided
   const defaultName = extractSlackWorkspaceName(workspaceUrl);
 
@@ -128,8 +121,6 @@ export async function authenticateBrowser(
   }
 }
 
-export type AutoLoginFailure = BrowserSessionFailure | CaptureFailure;
-
 export interface AutoLoginResult {
   saved: WorkspaceConfig[];
   failed: Array<{ workspaceUrl: string; error: string }>;
@@ -143,118 +134,12 @@ export interface AutoLoginOptions {
   secretBackend?: SecretBackend;
 }
 
-/** Thrown when the browser capture never produced tokens. Carries the reason
- *  so the command layer can print guidance specific to what went wrong. */
-export class AutoLoginError extends Error {
-  public reason: AutoLoginFailure;
-
-  constructor(reason: AutoLoginFailure, message: string) {
-    super(message);
-    this.name = 'AutoLoginError';
-    this.reason = reason;
-  }
-}
-
-/**
- * Log in by capturing tokens from a browser the user signs into.
- *
- * Verification and persistence deliberately route through
- * `authenticateBrowser` — the same path `login-browser` and `parse-curl` use
- * — so a workspace enrolled this way is indistinguishable from one added by
- * hand, and there is exactly one place that decides a token is valid.
- *
- * Per-workspace failures are collected rather than thrown: with several
- * workspaces captured at once, one stale token must not discard the rest.
- */
+// Retained compatibility entry point. Automatic capture is disabled before
+// browser, filesystem or network activity, for every option combination.
 export async function authenticateAuto(
-  options: AutoLoginOptions = {}
+  _options: AutoLoginOptions = {}
 ): Promise<AutoLoginResult> {
-  const onProgress = options.onProgress ?? (() => {});
-
-  logger.info('login-auto started', {
-    headless: options.headless ?? false,
-    workspace_url_given: Boolean(options.workspaceUrl),
-    secret_backend: options.secretBackend ?? 'file',
-  });
-
-  const opened = await openBrowserSession({
-    headless: options.headless ?? false,
-    startUrl: options.workspaceUrl ?? SLACK_CLIENT_URL,
-  });
-  if (!opened.ok) {
-    throw autoLoginFailed(opened.reason, opened.message);
-  }
-
-  let capture;
-  try {
-    capture = await captureSlackTokens(opened.session, {
-      headless: options.headless ?? false,
-      ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
-      ...(options.workspaceUrl ? { startUrl: options.workspaceUrl } : {}),
-      onProgress,
-    });
-  } finally {
-    // The browser holds a live session; close it whether or not we got what
-    // we came for.
-    await opened.stop();
-  }
-
-  if (!capture.ok) {
-    throw autoLoginFailed(capture.reason, capture.message);
-  }
-
-  const saved: WorkspaceConfig[] = [];
-  const failed: AutoLoginResult['failed'] = [];
-
-  for (const workspace of capture.workspaces) {
-    // Last gate before the session cookie is sent anywhere. The extractors
-    // already filter, but this is the line that decides where a live
-    // credential travels, so it does not delegate that check.
-    if (!isSlackWorkspaceUrl(workspace.workspaceUrl)) {
-      logger.warn('login-auto refused a non-Slack workspace URL', { team_id: workspace.teamId });
-      failed.push({
-        workspaceUrl: workspace.workspaceUrl,
-        error: 'Refused: not an https slack.com workspace URL',
-      });
-      continue;
-    }
-
-    try {
-      // login-auto enrols every captured workspace at once, so a single
-      // --profile can't map to it; these keep the default team_id keying.
-      const { config } = await authenticateBrowser(
-        capture.xoxd,
-        workspace.xoxc,
-        workspace.workspaceUrl,
-        workspace.teamName,
-        undefined,
-        options.secretBackend ?? 'file'
-      );
-      saved.push(config);
-    } catch (err: any) {
-      logger.warn('login-auto could not save a captured workspace: {error}', {
-        team_id: workspace.teamId,
-        error: errorMessageForLog(err),
-      });
-      failed.push({
-        workspaceUrl: workspace.workspaceUrl,
-        error: err?.message ?? 'Unknown error',
-      });
-    }
-  }
-
-  logger.info('login-auto finished: {saved} saved, {failed} failed', {
-    saved: saved.length,
-    failed: failed.length,
-    workspace_ids: saved.map((config) => config.workspace_id),
-  });
-  return { saved, failed };
-}
-
-/** Log the typed reason before it reaches the command layer. */
-function autoLoginFailed(reason: AutoLoginFailure, message: string): AutoLoginError {
-  logger.error('login-auto failed: {reason}', { reason });
-  return new AutoLoginError(reason, message);
+  throw new Error('login-auto is disabled in this privacy fork. Use local stdin authentication.');
 }
 
 // Get authenticated client for workspace

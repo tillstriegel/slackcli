@@ -52,6 +52,7 @@ const defaultDeps: CurlInputDeps = {
   readStdin: readProcessStdin,
   readInteractive: () =>
     readInteractiveInput({
+      secret: true,
       prompt: 'Paste your cURL command (press Enter twice when done):',
       hint: 'Copy the cURL command from browser DevTools (Right-click → Copy → Copy as cURL)',
     }),

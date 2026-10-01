@@ -1,4 +1,6 @@
-import { mkdir, readFile, writeFile, exists } from 'node:fs/promises';
+import { canonicalWorkspaceOrigin } from './slack-url-policy.ts';
+import { mkdir, open, lstat, chmod } from 'node:fs/promises';
+import { constants } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { getLogger } from '@logtape/logtape';
@@ -22,18 +24,43 @@ const logger = getLogger(['slackcli', 'workspaces']);
 const CONFIG_DIR = join(homedir(), '.config', 'slackcli');
 const WORKSPACES_FILE = join(CONFIG_DIR, 'workspaces.json');
 
-// Ensure config directory exists
+// Refuse symlinked config paths rather than write credentials through them.
 async function ensureConfigDir(): Promise<void> {
-  if (!await exists(CONFIG_DIR)) {
-    await mkdir(CONFIG_DIR, { recursive: true, mode: 0o700 });
+  const parent = join(homedir(), '.config');
+  await mkdir(parent, { recursive: true, mode: 0o700 });
+  if (!(await lstat(parent)).isDirectory()) throw new Error('Config parent must be a real directory');
+  await mkdir(CONFIG_DIR, { recursive: true, mode: 0o700 });
+  const directory = await lstat(CONFIG_DIR);
+  if (!directory.isDirectory() || (process.getuid && directory.uid !== process.getuid())) {
+    throw new Error('Config path must be an owner-controlled real directory');
   }
+  if (process.platform === 'win32') { await chmod(CONFIG_DIR, 0o700); return; }
+  const handle = await open(CONFIG_DIR, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    if (!(await handle.stat()).isDirectory()) throw new Error('Config path must be a real directory');
+    await handle.chmod(0o700);
+  } finally { await handle.close(); }
+}
+
+async function openPrivateFile(path: string, flags: number) {
+  const existing = await lstat(path).catch((err) => { if (err.code === 'ENOENT') return null; throw err; });
+  if (existing?.isSymbolicLink()) throw new Error('Credential file must not be a symlink');
+  const handle = await open(path, flags | constants.O_NOFOLLOW, 0o600);
+  try {
+    const st = await handle.stat();
+    if (!st.isFile() || st.nlink !== 1 || (process.getuid && st.uid !== process.getuid())) {
+      throw new Error('Credential file must be an owner-controlled regular file without hard links');
+    }
+    await handle.chmod(0o600);
+    return handle;
+  } catch (error) { await handle.close(); throw error; }
 }
 
 // Load workspaces data
 export async function loadWorkspaces(): Promise<WorkspacesData> {
   await ensureConfigDir();
 
-  if (!await exists(WORKSPACES_FILE)) {
+  if (!await lstat(WORKSPACES_FILE).catch((err) => { if (err.code === 'ENOENT') return null; throw err; })) {
     logger.debug('No workspaces file yet');
     return { workspaces: {} };
   }
@@ -41,12 +68,13 @@ export async function loadWorkspaces(): Promise<WorkspacesData> {
   return readWorkspacesFile(WORKSPACES_FILE);
 }
 
-// Read and parse a workspaces document. An unreadable or corrupt file is
-// reported and treated as empty, as it always has been. Exported so the
-// corrupt-file path is testable against a temporary file.
+// Read a regular private credential file. Unsafe paths and open failures
+// reject; corrupt JSON keeps the legacy warning/empty-document behavior.
+// Exported so these paths can be tested without real configuration.
 export async function readWorkspacesFile(path: string): Promise<WorkspacesData> {
+  const handle = await openPrivateFile(path, constants.O_RDONLY);
   try {
-    const data: WorkspacesData = JSON.parse(await readFile(path, 'utf-8'));
+    const data: WorkspacesData = JSON.parse(await handle.readFile('utf-8'));
     logger.debug('Loaded {count} workspaces', {
       count: Object.keys(data?.workspaces ?? {}).length,
       default_workspace: data?.default_workspace,
@@ -60,7 +88,7 @@ export async function readWorkspacesFile(path: string): Promise<WorkspacesData> 
     });
     warning(`Error loading workspaces: ${message}`);
     return { workspaces: {} };
-  }
+  } finally { await handle.close(); }
 }
 
 // A JSON parse error can quote a fragment of the file (`Unexpected identifier
@@ -77,7 +105,11 @@ export function describeLoadError(error: unknown, home: string = homedir()): str
 // Save workspaces data
 export async function saveWorkspaces(data: WorkspacesData): Promise<void> {
   await ensureConfigDir();
-  await writeFile(WORKSPACES_FILE, JSON.stringify(data, null, 2), { mode: 0o600 });
+  const handle = await openPrivateFile(WORKSPACES_FILE, constants.O_RDWR | constants.O_CREAT);
+  try {
+    await handle.truncate(0);
+    await handle.writeFile(JSON.stringify(data, null, 2));
+  } finally { await handle.close(); }
   logger.info('Saved {count} workspaces', {
     count: Object.keys(data.workspaces).length,
     default_workspace: data.default_workspace,
@@ -244,6 +276,7 @@ export async function putWorkspace(
   profile?: string,
   backend: SecretBackend = 'file',
 ): Promise<string> {
+  if (config.auth_type === 'browser') config = { ...config, workspace_url: canonicalWorkspaceOrigin(config.workspace_url) };
   const key = deriveStorageKey(data, config, profile);
 
   // Only persist a `profile` field when the key carries meaning (an explicit
@@ -307,6 +340,7 @@ export async function readWorkspace(
 ): Promise<WorkspaceConfig | null> {
   const resolved = resolveWorkspace(data, identifier);
   if (!resolved) return null;
+  if (resolved.config.auth_type === 'browser') canonicalWorkspaceOrigin(resolved.config.workspace_url);
   return loadCredentials(store, resolved.key, metadataOf(resolved.config));
 }
 
@@ -540,6 +574,7 @@ export async function migrateSecrets(
   target: SecretBackend,
   identifier?: string,
 ): Promise<{ results: MigrationResult[]; failed: Array<{ key: string; error: string }> }> {
+  if (target === 'keychain') throw new Error('Keychain migration is disabled in this privacy fork');
   const data = await loadWorkspaces();
   const keys = identifier
     ? [resolveWorkspace(data, identifier)?.key ?? identifier]

@@ -30,6 +30,7 @@ const TOKENS = [
   token('xoxd', 'AbCd/EfGh+IjKl=='),
   token('xoxe', '1', 'My0xLTEyMzQ1Njc4OTAtMTIzNDU2Nzg5MC0xMjM0NTY3ODkwMTIz'),
   token('xoxe.xoxp', '1', 'Mi0yLTEyMzQ1Njc4OTAtMTIzNDU2Nzg5MC0xMjM0NTY3ODkwMTIz'),
+  token('xoxe.xoxb', '1', 'FAKE-RotatedBotAccessToken'),
   token('xoxa', '2', '1234567890', 'abcdef'),
 ];
 

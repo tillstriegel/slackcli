@@ -339,13 +339,8 @@ export class MacOSKeychainSecretStore implements SecretStore {
   }
 
   async set(key: string, value: string): Promise<void> {
-    this.assertAvailable();
-    // -U: update in place if an entry for this service+account already exists,
-    // rather than failing with "already exists" (needed for token refresh).
-    const result = await this.run([
-      'add-generic-password', '-a', key, '-s', KEYCHAIN_SERVICE, '-w', value, '-U',
-    ]);
-    if (result.code !== 0) throw keychainError(result, `write "${key}"`);
+    // security -w exposes the secret in process argv. No write or fallback.
+    throw new SecretStoreError('keychain', 'unavailable', 'Keychain writes are disabled in this privacy fork. Use the private local file backend.');
   }
 
   async delete(key: string): Promise<void> {

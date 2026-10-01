@@ -29,7 +29,7 @@ important thing to understand about this codebase.
 
 | | Standard | Browser |
 |---|---|---|
-| Tokens | `xoxb-*` / `xoxp-*` | `xoxd-*` cookie + `xoxc-*` token |
+| Tokens | `xoxb-*` / `xoxp-*`, including rotated `xoxe.xoxb-*` / `xoxe.xoxp-*` | `xoxd-*` cookie + `xoxc-*` token |
 | Transport | `@slack/web-api` `WebClient` | raw `fetch` to `<workspace_url>/api/<method>` |
 | Auth carried by | SDK bearer token | `Cookie: d=<urlencoded xoxd>` + `token` form field |
 | Discriminated by | `config.auth_type === 'standard'` | `config.auth_type === 'browser'` |
@@ -121,6 +121,11 @@ the command's `--help` text and in the [user guide](../user-guide/README.md).
 
 ## Workspace storage
 
+Existing credential directory/file modes are repaired to 0700/0600. Config
+symlinks and credential-file hard links are refused; file handles use
+`O_NOFOLLOW` and verify owner/type before reading or truncating. This is not
+crash-atomic storage or protection against a malicious same-user process.
+
 `src/lib/workspaces.ts` owns `~/.config/slackcli/workspaces.json` (file `0600`
 inside a `0700` directory).
 
@@ -155,7 +160,8 @@ metadata (`metadataOf()`) plus secrets (`storeCredentials()` /
   (service `slackcli`, account `<profile key>:<token|xoxc|xoxd>`) rather than
   an FFI binding — the `cdp-client.ts` trade-off again. Its `SecurityCliRunner`
   is injectable, the same seam `cdp-client.test.ts` uses for an untestable
-  transport, so it is fully unit-tested without a real Mac or keychain.
+  transport, so it is fully unit-tested without a real Mac or keychain. Writes
+  are disabled before shell-out; inherited profiles can still be read/deleted.
 - `get` returns `null` only when a secret does not exist. A backend that is
   unavailable or refuses access throws `SecretStoreError` (`reason`
   `unavailable` / `access_denied`); a record whose secret is missing surfaces as
@@ -185,6 +191,10 @@ default, not the user's original choice — would silently migrate a Keychain
 profile back to plaintext. The only sanctioned way to change an existing
 profile's backend is `migrateWorkspaceCredentials()` /
 `auth migrate-secrets`.
+
+Migration to Keychain is disabled at the CLI and I/O wrapper. The pure
+migration helpers remain tested with fake stores. Migration to file keeps the
+following safeguards.
 
 Migration takes explicit `{ file, keychain }` backend instances
 (`secretBackendsFor()`), never the routing store — the routing store starts
@@ -219,19 +229,23 @@ is valid.
 - `authenticateStandard()` and `authenticateBrowser()` build a temporary config,
   call `auth.test`, then persist the real `team_id` / `user_id` from the
   response.
-- `authenticateAuto()` — the `login-auto` flow — deliberately routes
-  verification and persistence back through `authenticateBrowser()`, so a
-  workspace enrolled by the browser is indistinguishable from one added by hand.
-- `getAuthenticatedClient(identifier?)` is what every command calls to get a
-  ready `SlackClient`.
+- `authenticateAuto()` fails closed before any capture. The CLI command is disabled too.
+- `getAuthenticatedClient(identifier?)` resolves a stored profile and returns a client.
 
-Per-workspace failures in `authenticateAuto()` are collected rather than thrown:
-when several workspaces are captured at once, one stale token must not discard
-the rest.
+`credential-input.ts` parses stdin tokens without echoing values. Secret TTY
+entry fails before listeners or terminal changes. `slack-url-policy.ts` owns
+origin, file-host, method and proxy rules. Validate at each transport boundary,
+including loaded or mutated configs. The SDK base is explicit; its Axios
+transport keeps `proxy: false` and `maxRedirects: 0`. File redirects are manual,
+with credentials only on Slack hosts and uncredentialed CDN hops.
+The shared request boundary blocks `files.uploadV2` and legacy `files.upload`
+before SDK invocation or file access. Use `uploadFileExternal`, which validates
+the returned destination before reading bytes. The actual external-upload URL
+and completion API methods remain available.
 
-## Browser token capture (`login-auto`)
+## Retained browser helper code (automatic login disabled)
 
-Three modules, in order:
+These modules remain unit-tested for maintenance. No CLI automatic-login path calls them:
 
 1. **`browser-launcher.ts`** — finds a local Chrome/Edge/Chromium/Brave
    (`SLACKCLI_BROWSER` overrides), launches it against SlackCLI's own profile
@@ -290,7 +304,7 @@ on the non-JSON paths.
 
 ## Logging
 
-Every run writes a JSON Lines log through [LogTape](https://logtape.org). The
+An explicitly opted-in run writes a JSON Lines log through [LogTape](https://logtape.org). The
 pieces:
 
 - **`src/lib/logger.ts`** is configuration only. `startLogging()` runs once, in
@@ -308,7 +322,8 @@ pieces:
   did) and writes a `usage_error` record in `slackcli.cli` with the Commander
   `code`, `exit_code` and command path, then exits with Commander's exit code.
   Commander's message is not logged, since `invalidArgument` echoes the user's
-  value. Help and version exits skip logging entirely.
+  value. Usage stderr is generic to prevent argument-value disclosure.
+  Help and version exits skip logging entirely.
 - **Libraries log through categories**, `getLogger(['slackcli', '<area>'])`,
   imported straight from `@logtape/logtape` (not from `logger.ts`, which imports
   `updater.ts` and would invite an import cycle). A logger is a no-op until
@@ -336,8 +351,8 @@ pieces:
   text, file contents or search queries** — log IDs, method names, counts,
   statuses and durations. `SlackClient.request()` logs only param *names*, at
   `trace`. The SDK adapter drops `@slack/web-api`'s debug output, which
-  serialises full request bodies. The `login-auto` path logs outcomes and typed
-  failure reasons only: `cdp` never logs command `params`/`result` or event
+  serialises full request bodies. Retained browser helpers log outcomes and typed
+  failure reasons only (automatic login is disabled): `cdp` never logs command `params`/`result` or event
   payloads, `browser-auth` logs "found / not found" and team IDs, never a
   token, cookie or `postData`, and the launcher logs the start URL's origin
   only. A corrupt `workspaces.json` is logged by its parse error, with quoted

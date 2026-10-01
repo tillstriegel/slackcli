@@ -6,6 +6,7 @@ import * as readline from 'node:readline';
 import chalk from 'chalk';
 
 export interface InteractiveInputOptions {
+  secret?: boolean;
   prompt?: string;
   hint?: string;
   /**
@@ -22,6 +23,14 @@ export interface InteractiveInputOptions {
 export async function readInteractiveInput(
   options: InteractiveInputOptions = {}
 ): Promise<string> {
+  if (options.secret && process.stdin.isTTY) {
+    throw new Error('Interactive secret entry is disabled. Pipe credentials from a local file or clipboard into stdin.');
+  }
+  if (!process.stdin.isTTY) {
+    const chunks: Buffer[] = [];
+    for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk));
+    return Buffer.concat(chunks).toString('utf-8');
+  }
   const {
     prompt = 'Paste your input (press Enter twice when done):',
     hint = 'Tip: You can also press Ctrl+D to finish',
@@ -31,18 +40,6 @@ export async function readInteractiveInput(
   return new Promise((resolve, reject) => {
     const lines: string[] = [];
     let consecutiveEmptyLines = 0;
-
-    // Check if stdin is a TTY (interactive terminal)
-    if (!process.stdin.isTTY) {
-      // Not interactive, read all stdin
-      const chunks: Buffer[] = [];
-      process.stdin.on('data', (chunk) => chunks.push(chunk));
-      process.stdin.on('end', () => {
-        resolve(Buffer.concat(chunks).toString('utf-8'));
-      });
-      process.stdin.on('error', reject);
-      return;
-    }
 
     console.log(chalk.bold(`\n${prompt}`));
     console.log(chalk.gray(hint));

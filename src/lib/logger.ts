@@ -107,11 +107,11 @@ export interface ResolvedLogLevel {
 }
 
 /**
- * Precedence: `-v/--verbose` > `SLACKCLI_LOG_LEVEL` > `info`.
+ * Precedence: `-v/--verbose` > `SLACKCLI_LOG_LEVEL` > `off`.
  *
  * `-v` means `debug`, except that it never makes an explicit
  * `SLACKCLI_LOG_LEVEL=trace` less verbose. An unrecognised env value falls back
- * to `info` and is reported so the caller can warn once.
+ * to `off` and is reported so the caller can warn once.
  */
 export function resolveLogLevel(options: { verbose: boolean; envValue?: string }): ResolvedLogLevel {
   const raw = options.envValue?.trim().toLowerCase();
@@ -130,7 +130,7 @@ export function resolveLogLevel(options: { verbose: boolean; envValue?: string }
   if (options.verbose) {
     level = fromEnv === 'trace' ? 'trace' : 'debug';
   } else {
-    level = fromEnv ?? 'info';
+    level = fromEnv ?? 'off';
   }
 
   return invalidValue === undefined ? { level } : { level, invalidValue };
@@ -381,7 +381,7 @@ export function startLogging(options: { verbose: boolean; actionCommand: Command
   const resolved = resolveLogLevel({ verbose: options.verbose, envValue: process.env.SLACKCLI_LOG_LEVEL });
   if (resolved.invalidValue !== undefined) {
     warning(
-      `Ignoring SLACKCLI_LOG_LEVEL="${resolved.invalidValue}"; expected one of ${LOG_LEVEL_SETTINGS.join(', ')}. Using ${resolved.level}.`,
+      `Ignoring invalid SLACKCLI_LOG_LEVEL; expected one of ${LOG_LEVEL_SETTINGS.join(', ')}. Using ${resolved.level}.`,
     );
   }
 
@@ -456,14 +456,14 @@ export interface UsageErrorLoggingOptions {
 /**
  * Installs an exit override on `root` and every command below it, so a usage
  * error is logged before the process exits with Commander's own exit code.
- * Commander has already printed the error by then, so terminal output is
- * unchanged. Must run after every `addCommand()`: `addCommand()` does not copy
+ * Commander prints a generic usage error, with no argument values. Must run after every `addCommand()`: `addCommand()` does not copy
  * the parent's exit override, and Commander only calls the failing command's
  * own override.
  */
 export function installUsageErrorLogging(root: Command, options: UsageErrorLoggingOptions): void {
   const exit = options.exit ?? ((code: number) => process.exit(code));
   const install = (cmd: Command) => {
+    cmd.configureOutput({ outputError: (_message, write) => write('error: Invalid command arguments. See --help.\n') });
     cmd.exitOverride((err) => {
       try {
         if (isUsageError(err.code)) {

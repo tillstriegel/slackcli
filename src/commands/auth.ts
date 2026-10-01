@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import ora, { type Ora } from 'ora';
-import { authenticateStandard, authenticateBrowser, authenticateAuto, AutoLoginError } from '../lib/auth.ts';
+import { authenticateStandard, authenticateBrowser } from '../lib/auth.ts';
 import {
   getAllWorkspaceEntries,
   setDefaultWorkspace,
@@ -14,27 +14,22 @@ import chalk from 'chalk';
 import { parseCurlCommand, type ParsedCurlResult } from '../lib/curl-parser.ts';
 import { resolveCurlInput, type CurlInputResult } from '../lib/curl-input.ts';
 import { clearBrowserProfile } from '../lib/browser-launcher.ts';
-import { isSlackWorkspaceUrl } from '../lib/browser-auth.ts';
+import { parseStandardToken, parseBrowserTokens, readCredentialStdin } from '../lib/credential-input.ts';
 import { confirmWrite } from './usergroups.ts';
 import type { SecretBackend } from '../types/index.ts';
 
-// Validates the `--secret-backend` flag shared by every login path. Exits the
-// process on an invalid value or on `keychain` requested off macOS — both are
-// deliberately checked here, before any network call, rather than left to
-// surface later from deep inside MacOSKeychainSecretStore's own runtime guard.
-// `platform` is injectable (same convention as browser-launcher.ts's
-// findBrowser) so the off-macOS branch is testable on every CI runner, not
-// just a real Mac.
+// Validate before authentication or storage. The platform parameter is retained
+// for existing callers; this fork refuses Keychain writes on every platform.
 export function resolveSecretBackend(
   value: string,
-  platform: string = process.platform,
+  _platform: string = process.platform,
 ): SecretBackend {
   if (value !== 'file' && value !== 'keychain') {
-    error(`--secret-backend must be "file" or "keychain" (got "${value}")`);
+    error('--secret-backend must be "file"; Keychain writes are disabled in this privacy fork');
     process.exit(1);
   }
-  if (value === 'keychain' && platform !== 'darwin') {
-    error('--secret-backend keychain is only available on macOS.');
+  if (value === 'keychain') {
+    error('Keychain writes are disabled in this privacy fork; use --secret-backend file.');
     process.exit(1);
   }
   return value;
@@ -50,9 +45,9 @@ function reportCurlInputFailure(
   switch (result.reason) {
     case 'clipboard-failed':
       clipboardSpinner.fail('Failed to read clipboard');
-      error(result.message);
-      console.log(chalk.yellow('\n💡 Tip: Try the interactive mode instead:'));
-      console.log(chalk.cyan('   slackcli auth parse-curl --login\n'));
+      error('Clipboard read failed. Use local stdin.');
+      console.log(chalk.yellow('\n💡 Tip: Try local stdin instead:'));
+      console.log(chalk.cyan('   slackcli auth parse-curl --login < curl-command.txt\n'));
       return;
     case 'not-curl':
       clipboardSpinner.succeed('Read from clipboard');
@@ -62,8 +57,8 @@ function reportCurlInputFailure(
       return;
     case 'empty':
       error('No cURL command provided. Usage:');
-      console.log('\n  Interactive mode (recommended):');
-      console.log(chalk.cyan('    slackcli auth parse-curl --login'));
+      console.log('\n  Local stdin (recommended):');
+      console.log(chalk.cyan('    pbpaste | slackcli auth parse-curl --login'));
       console.log('\n  From clipboard:');
       console.log(chalk.cyan('    slackcli auth parse-curl --from-clipboard --login'));
       console.log('\n  Piped input:');
@@ -94,14 +89,8 @@ async function loginWithParsedTokens(parsed: ParsedCurlResult, secretBackend: Se
   }
 }
 
-function printLoginHint(parsed: ParsedCurlResult): void {
-  console.log(chalk.bold('To login with these tokens, run:\n'));
-  console.log(chalk.cyan('  slackcli auth parse-curl --login'));
-  console.log(chalk.gray('\nOr manually:\n'));
-  console.log(`  slackcli auth login-browser \\`);
-  console.log(`    --xoxd="${parsed.xoxd}" \\`);
-  console.log(`    --xoxc="${parsed.xoxc}" \\`);
-  console.log(`    --workspace-url="${parsed.workspaceUrl}"\n`);
+function printLoginHint(): void {
+  info('To authenticate, pipe the same cURL input into slackcli auth parse-curl --login, or use --from-clipboard --login.');
 }
 
 export function createAuthCommand(): Command {
@@ -112,17 +101,22 @@ export function createAuthCommand(): Command {
   auth
     .command('login')
     .description('Login with standard Slack app token (xoxb-* or xoxp-*)')
-    .requiredOption('--token <token>', 'Slack bot or user token')
+    .option('--token <token>', 'Legacy input: exposes credentials in argv/history; prefer --token-stdin')
+    .option('--token-stdin', 'Read one standard token from noninteractive stdin')
     .requiredOption('--workspace-name <name>', 'Workspace name for identification')
     .option('--profile <name>', 'Store under a named profile (keeps multiple identities for one workspace)')
-    .option('--secret-backend <backend>', 'Where to store credentials for a NEW profile: file (default) or keychain (macOS only)', 'file')
+    .option('--secret-backend <backend>', 'Where to store credentials for a NEW profile: file (default); Keychain writes disabled', 'file')
     .action(async (options) => {
       const secretBackend = resolveSecretBackend(options.secretBackend);
       const spinner = ora('Authenticating...').start();
 
       try {
+        if (options.tokenStdin && options.token) throw new Error('Choose --token-stdin or --token');
+        if (options.token) warning('Legacy token options expose credentials in argv and shell history. Prefer --token-stdin.');
         const { config, profileKey } = await authenticateStandard(
-          options.token,
+          options.tokenStdin
+            ? parseStandardToken(await readCredentialStdin())
+            : parseStandardToken(options.token ?? ''),
           options.workspaceName,
           options.profile,
           secretBackend
@@ -146,20 +140,24 @@ export function createAuthCommand(): Command {
   auth
     .command('login-browser')
     .description('Login with browser session tokens (xoxd-* and xoxc-*)')
-    .requiredOption('--xoxd <token>', 'Browser session token (xoxd-*)')
-    .requiredOption('--xoxc <token>', 'Browser API token (xoxc-*)')
+    .option('--xoxd <token>', 'Legacy input: exposes credentials in argv/history')
+    .option('--xoxc <token>', 'Legacy input: exposes credentials in argv/history')
+    .option('--tokens-stdin', 'Read JSON with xoxd and xoxc fields from noninteractive stdin')
     .requiredOption('--workspace-url <url>', 'Workspace URL (e.g., https://myteam.slack.com)')
     .option('--workspace-name <name>', 'Optional workspace name for identification')
     .option('--profile <name>', 'Store under a named profile (keeps multiple identities for one workspace)')
-    .option('--secret-backend <backend>', 'Where to store credentials for a NEW profile: file (default) or keychain (macOS only)', 'file')
+    .option('--secret-backend <backend>', 'Where to store credentials for a NEW profile: file (default); Keychain writes disabled', 'file')
     .action(async (options) => {
       const secretBackend = resolveSecretBackend(options.secretBackend);
       const spinner = ora('Authenticating...').start();
 
       try {
+        if (options.tokensStdin && (options.xoxd || options.xoxc)) throw new Error('Choose --tokens-stdin or legacy token options');
+        if (options.xoxd || options.xoxc) warning('Legacy token options expose credentials in argv and shell history. Prefer --tokens-stdin.');
+        const tokens = options.tokensStdin ? parseBrowserTokens(await readCredentialStdin()) : parseBrowserTokens(JSON.stringify({ xoxd: options.xoxd, xoxc: options.xoxc }));
         const { config, profileKey } = await authenticateBrowser(
-          options.xoxd,
-          options.xoxc,
+          tokens.xoxd,
+          tokens.xoxc,
           options.workspaceUrl,
           options.workspaceName,
           options.profile,
@@ -183,75 +181,14 @@ export function createAuthCommand(): Command {
   // Login by capturing tokens from a browser session
   auth
     .command('login-auto')
-    .description('Login by signing into Slack in a browser (captures tokens automatically)')
-    .option('--workspace-url <url>', 'Open a specific workspace (e.g., https://myteam.slack.com)')
-    .option('--headless', 'Run without a visible window (only works if already signed in)')
-    .option('--timeout <seconds>', 'How long to wait for sign-in', '300')
-    .option('--secret-backend <backend>', 'Where to store credentials for a NEW profile: file (default) or keychain (macOS only)', 'file')
-    .action(async (options) => {
-      const secretBackend = resolveSecretBackend(options.secretBackend);
-      const timeoutSeconds = Number(options.timeout);
-      if (
-        !Number.isFinite(timeoutSeconds) ||
-        !Number.isInteger(timeoutSeconds) ||
-        timeoutSeconds <= 0
-      ) {
-        error('--timeout must be a positive number of seconds');
-        process.exit(1);
-      }
-
-      // Checked here as well as at the launcher: this value becomes browser
-      // argv, and it is the host the session cookie would be sent to.
-      if (options.workspaceUrl && !isSlackWorkspaceUrl(options.workspaceUrl)) {
-        error('--workspace-url must be an https URL on a slack.com host');
-        console.log(chalk.dim('   e.g. https://myteam.slack.com'));
-        process.exit(1);
-      }
-
-      const spinner = ora('Launching browser...').start();
-
-      try {
-        const result = await authenticateAuto({
-          headless: options.headless === true,
-          workspaceUrl: options.workspaceUrl,
-          timeoutMs: timeoutSeconds * 1000,
-          secretBackend,
-          // The spinner owns the terminal line, so progress has to go through it.
-          onProgress: (line) => {
-            spinner.text = line;
-          },
-        });
-
-        if (result.saved.length === 0) {
-          spinner.fail('No workspaces could be authenticated');
-          result.failed.forEach((f) => error(`${f.workspaceUrl}: ${f.error}`));
-          process.exit(1);
-        }
-
-        spinner.succeed(
-          `Authenticated ${result.saved.length} workspace${result.saved.length === 1 ? '' : 's'}`
-        );
-
-        result.saved.forEach((config) => {
-          const workspaceId = chalk.dim(`(${config.workspace_id})`);
-          success(`${config.workspace_name} ${workspaceId}`);
-        });
-
-        // Partial success is still success — surface the misses without
-        // discarding the workspaces that did authenticate.
-        result.failed.forEach((f) => {
-          warning(`Skipped ${f.workspaceUrl}: ${f.error}`);
-        });
-      } catch (err: any) {
-        spinner.fail('Automatic login failed');
-        error(err.message);
-
-        if (err instanceof AutoLoginError && err.reason === 'browser_not_found') {
-          console.log(chalk.yellow('\n💡 Or extract tokens manually:'));
-          console.log(chalk.cyan('   slackcli auth parse-curl --login\n'));
-        }
-        process.exit(1);
-      }
+    .description('Disabled in the privacy fork: browser capture cannot guarantee private networking')
+    .option('--workspace-url <url>', 'Disabled')
+    .option('--headless', 'Disabled')
+    .option('--timeout <seconds>', 'Disabled')
+    .option('--secret-backend <backend>', 'Disabled', 'file')
+    .action(() => {
+      error('login-auto is disabled in this privacy fork. Use auth login --token-stdin or auth parse-curl with local stdin.');
+      process.exitCode = 1;
     });
 
   // List all workspaces
@@ -324,7 +261,7 @@ export function createAuthCommand(): Command {
         // exists, `login-auto` re-mints valid tokens with no interaction. A
         // logout that left it behind would report a logout it did not perform.
         if (options.keepBrowserSession) {
-          warning('Browser session kept — "auth login-auto" can still sign in without prompting.');
+          warning('Browser session kept — the inherited browser session remains stored.');
         } else {
           const cleared = await clearBrowserProfile();
           // Never silent about a profile left behind: it is a live credential,
@@ -349,11 +286,7 @@ export function createAuthCommand(): Command {
     .command('extract-tokens')
     .description('Show guide for extracting browser tokens')
     .action(() => {
-      console.log(chalk.bold('\n✨ Easiest: let slackcli do it\n'));
-      console.log(chalk.cyan('   slackcli auth login-auto'));
-      console.log(chalk.dim('   Opens a browser, you sign in, tokens are captured automatically.'));
-      console.log(chalk.dim('   Enrols every workspace you are signed into.\n'));
-      console.log(chalk.bold('🔍 Or extract them by hand:\n'));
+      info('Automatic browser capture is disabled in this privacy fork. Copy a cURL request from your own browser and supply it through local stdin or --from-clipboard.');
       console.log('1. Open your Slack workspace in a web browser');
       console.log('2. Open Developer Tools (F12 or Cmd+Option+I)');
       console.log('3. Go to the Network tab');
@@ -363,14 +296,7 @@ export function createAuthCommand(): Command {
       console.log('   - xoxd token: In the "Cookie" header, look for d=xoxd-...');
       console.log('   - xoxc token: In the request payload, look for "token":"xoxc-..."');
       console.log('\n✨ Use the tokens:');
-      console.log('   slackcli auth login-browser \\');
-      console.log('     --xoxd=xoxd-... \\');
-      console.log('     --xoxc=xoxc-... \\');
-      console.log('     --workspace-url=https://yourteam.slack.com\n');
-      console.log('\n💡 Or use the easy way:');
-      console.log('   Right-click on any Slack API request → Copy → Copy as cURL');
-      console.log('   Then run: slackcli auth parse-curl --login');
-      console.log('   (Interactive mode - just paste and press Enter twice)\n');
+      console.log('   pbpaste | slackcli auth parse-curl --login');
       console.log('   Or: slackcli auth parse-curl --from-clipboard --login');
       console.log('   (Reads directly from your clipboard)\n');
     });
@@ -379,10 +305,10 @@ export function createAuthCommand(): Command {
   auth
     .command('parse-curl')
     .description('Extract xoxd and xoxc tokens from a cURL command')
-    .argument('[curl-command]', 'cURL command (or use --from-clipboard / interactive mode)')
+    .argument('[curl-command]', 'Legacy argv input; prefer local stdin or --from-clipboard')
     .option('--login', 'Automatically login with extracted tokens')
     .option('--from-clipboard', 'Read cURL command from system clipboard')
-    .option('--secret-backend <backend>', 'With --login: where to store credentials for a NEW profile: file (default) or keychain (macOS only)', 'file')
+    .option('--secret-backend <backend>', 'With --login: where to store credentials for a NEW profile: file (default); Keychain writes disabled', 'file')
     .action(async (curlCommand, options) => {
       const secretBackend = options.login ? resolveSecretBackend(options.secretBackend) : 'file';
       try {
@@ -398,6 +324,7 @@ export function createAuthCommand(): Command {
         if (resolved.source === 'clipboard') {
           clipboardSpinner.succeed('Read from clipboard');
         }
+        if (resolved.source === 'argument') warning('Positional cURL input exposes credentials in argv/history. Prefer local stdin.');
         const curlInput = resolved.input;
 
         console.log(chalk.bold('\n🔍 Parsing cURL command...\n'));
@@ -411,16 +338,13 @@ export function createAuthCommand(): Command {
         console.log(`  Name: ${chalk.cyan(parsed.workspaceName)}`);
         console.log(`  URL:  ${chalk.cyan(parsed.workspaceUrl)}\n`);
 
-        const tokenLength = (token: string) => chalk.gray(`(${token.length} chars)`);
-        console.log(chalk.bold('Tokens:'));
-        console.log(`  xoxd: ${chalk.green(parsed.xoxd.substring(0, 20))}...${tokenLength(parsed.xoxd)}`);
-        console.log(`  xoxc: ${chalk.green(parsed.xoxc.substring(0, 20))}...${tokenLength(parsed.xoxc)}\n`);
+        info('Browser credentials found (values are never displayed).');
 
         // If --login flag is set, authenticate directly
         if (options.login) {
           await loginWithParsedTokens(parsed, secretBackend);
         } else {
-          printLoginHint(parsed);
+          printLoginHint();
         }
       } catch (err: any) {
         error('Failed to parse cURL command', err.message);
@@ -433,7 +357,7 @@ export function createAuthCommand(): Command {
   // Move stored credentials to a different SecretStore backend
   auth
     .command('migrate-secrets')
-    .description('Move stored credentials to a different backend (e.g. file -> macOS Keychain)')
+    .description('Move existing Keychain credentials to file; Keychain writes are disabled')
     .requiredOption('--to <backend>', 'Target backend: file or keychain (macOS only)')
     .option('--profile <name>', 'Migrate only this profile (default: every configured profile)')
     .option('--yes', 'Skip the confirmation prompt', false)

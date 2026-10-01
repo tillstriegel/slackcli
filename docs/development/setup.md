@@ -8,14 +8,14 @@
 - TypeScript 5.x (installed as a dev dependency)
 - [pre-commit](https://pre-commit.com) — **required**, `brew install pre-commit`
   or `pip install pre-commit`
-- Optional: Chrome, Edge, Chromium, or Brave, to exercise `auth login-auto`
+- Automatic browser login is disabled in this privacy fork; helper tests use fake browser fixtures.
 
 ## First run
 
 ```bash
-git clone https://github.com/shaharia-lab/slackcli.git
+git clone --branch privacy-hardened https://github.com/tillstriegel/slackcli.git
 cd slackcli
-bun install
+bun install --frozen-lockfile --ignore-scripts
 pre-commit install     # required — constitution §5, not optional
 ```
 
@@ -29,7 +29,7 @@ it before you start rather than working without the check.
 `bun.lock` is committed, and every CI job that installs the project's
 dependencies does so with `bun install --frozen-lockfile` (`ci.yml`, both jobs in
 `test.yml`, `sonar.yml`, and `release.yml`; the site workflows install `web/` with `npm ci`,
-which is already lockfile-bound). Locally you keep using plain `bun install` —
+which is already lockfile-bound). Locally use `bun install --ignore-scripts` for an intentional dependency change —
 but whenever you change `package.json`, **commit the regenerated `bun.lock`
 alongside it**. Otherwise the install step fails with:
 
@@ -111,11 +111,8 @@ Full text: [CONTRIBUTING.md](../../CONTRIBUTING.md) and the constitution in
 
 ## Local config while developing
 
-Running from source uses the same `~/.config/slackcli/workspaces.json` as an
-installed binary. If you want a throwaway identity for testing, add it under its
-own `--profile` and pass `--workspace=<profile>` rather than changing your
-default.
-
-The self-updater and its "update available" notice are disabled automatically
-when running under Bun, so `bun run dev` will never nag you or try to replace a
-binary that does not exist.
+Use a throwaway HOME and TMPDIR for development and CLI integration tests.
+Do not use real tokens, Keychain, clipboard or browser profiles. Source commands
+otherwise use the same config path as an installed binary. The updater and
+browser login are disabled regardless of runtime or environment. Logs are off
+by default; tests that need logs opt in explicitly.

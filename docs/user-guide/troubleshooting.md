@@ -2,7 +2,7 @@
 
 ## `No workspace configured`
 
-Nothing is authenticated yet. Run `slackcli auth login-auto`, or see
+Nothing is authenticated yet. Use local stdin credentials; see
 [authentication](authentication.md).
 
 ## `Workspace not found: <name>`
@@ -29,7 +29,7 @@ instead of the bare ID or name — see
 **Browser tokens**
 
 - They expire with your browser session. Refresh with
-  `slackcli auth login-auto --headless`, or re-run `parse-curl` / `login-browser`
+  local stdin with `parse-curl` / `login-browser`
   with fresh values.
 - The workspace URL must be `https://yourteam.slack.com`.
 
@@ -48,31 +48,18 @@ in again refreshes the tokens in place and keeps your profile key and default.
 - For browser tokens: if you cannot open it in the Slack web UI, the CLI cannot
   either.
 
-## `auth login-auto` cannot find a browser
+## `auth login-auto` is disabled
 
-It needs Chrome, Edge, Chromium, or Brave installed locally. If yours is in a
-non-standard place, point at it:
-
-```bash
-SLACKCLI_BROWSER=/path/to/chrome slackcli auth login-auto
-```
-
-If the browser opens but capture times out, sign in fully (including any SSO
-redirect and 2FA) before the `--timeout` window closes, or raise it with
-`--timeout=600`. Note that `--headless` only works *after* a first interactive
-sign-in has populated the profile.
-
-Every `login-auto` run records in the [log file](#logs) which browser was
-used, whether the slackcli browser profile was created or reused, whether the
-DevTools port came up, and the failure reason (for example `browser_exited`,
-`capture_timeout`, `no_cookie`). Captured tokens and cookies are never logged.
-Include those lines when you report a `login-auto` problem.
+This privacy fork refuses automatic browser capture before launching anything.
+Use local stdin or an explicitly requested clipboard read as described in
+[authentication](authentication.md). Browser/SSO traffic cannot be guaranteed
+private by this CLI.
 
 ## `auth parse-curl` cannot read the clipboard
 
 Clipboard access uses `pbpaste` (macOS), PowerShell (Windows), and
-`xclip`/`xsel` (Linux). Install one, or use interactive mode
-(`slackcli auth parse-curl --login`, paste, press Enter twice) or a pipe.
+`xclip`/`xsel` (Linux). Use local stdin from a private file if the clipboard
+path is unavailable. Interactive secret paste is disabled.
 
 ## `Clipboard content does not appear to be a cURL command`
 
@@ -113,22 +100,10 @@ non-JSON stdout paths (`canvas --raw`, human-readable output). `--json` output i
 not affected. Redirect to a file as a workaround, and add a comment on the issue
 with what you ran.
 
-## `slackcli update` does nothing or fails
+## `slackcli update` is disabled
 
-- **Installed via Homebrew**: use `brew upgrade slackcli`. The self-updater
-  detects this and refuses so it does not fight the package manager.
-- **Running from source**: there is no binary to replace — `git pull`.
-- **`No write permission for <folder> — run: sudo slackcli update`**: the binary
-  lives in a folder you cannot write to (for example `/usr/local/bin`), so the
-  update stops before downloading anything. Run `sudo slackcli update`, or on
-  Windows run `slackcli update` from an Administrator terminal. To update
-  without elevated rights, install to `~/.local/bin` instead.
-- **Checksum mismatch**: the update is aborted deliberately. Do not work around
-  it — download the binary manually and check it against `checksums.txt` from
-  the release.
-- **`Unable to check for updates`**: GitHub did not answer within 10 seconds or
-  returned an error. The background update notice is separate and bounded to
-  1.5 seconds, so a slow network never delays the end of a normal command.
+Both update commands give an offline explanation. They cannot download an
+upstream binary over this fork. Review a fork revision and build locally.
 
 ## Rate limits and slow commands
 
@@ -153,11 +128,12 @@ after the retries, wait a minute and run it again.
 
 ## Logs
 
-Every command writes a diagnostic log. It records what ran (command name and
+Logging is off by default. Opt in with `-v` or an explicit `SLACKCLI_LOG_LEVEL`.
+An opted-in command writes a local diagnostic log. It records what ran (command name and
 option names, never their values), your OS and slackcli version, and each Slack
 API call's method, outcome, Slack error code and duration. It also records
-authentication and `login-auto` steps, workspace config load and save (IDs
-only), credential-store failures, update checks, and any unexpected error with
+authentication outcomes, workspace config load and save (IDs only),
+credential-store failures, and any unexpected error with
 its stack trace. A command line that slackcli rejects (an unknown option or
 subcommand, a missing argument, an invalid value) is recorded too, as a
 `usage_error` with the error code, so `logs show --last 1` shows that run and
@@ -213,7 +189,7 @@ slackcli logs clear                # delete the log and its rotated copies (asks
 ### Sharing logs in a bug report
 
 1. Reproduce the problem.
-2. Run `slackcli logs show --last 1` and paste the output into the issue's
+2. Reproduce with logging explicitly enabled, then run `slackcli logs show --last 1` and paste the output into the issue's
    **Diagnostic log** field.
 3. Read it before you paste. Tokens and cookies are redacted automatically, but
    the log still contains IDs (workspace, channel, user) and your OS details;

@@ -2,17 +2,28 @@
 
 ## Quick start
 
-```bash
-# 1. Install (macOS / Linux)
-brew tap shaharia-lab/tap && brew install slackcli
+Build this fork from reviewed source as described in [installation](installation.md).
+Upstream Homebrew packages and release binaries do not contain these privacy changes.
 
-# 2. Sign in — a browser opens, you sign in once
-slackcli auth login-auto
+```bash
+# 1. Build and verify the reviewed fork (Bun 1.4.1+)
+bun install --frozen-lockfile --ignore-scripts
+bun run type-check
+bun test
+bun run build
+./dist/slackcli --version
+
+# 2. Sign in using a saved local browser DevTools cURL request on stdin
+./dist/slackcli auth parse-curl --login < curl-command.txt
 
 # 3. Use it
-slackcli conversations list
-slackcli messages send --recipient-id=C1234567890 --message="Hello from the terminal"
+./dist/slackcli conversations list
+./dist/slackcli messages send --recipient-id=C1234567890 --message="Hello from the terminal"
 ```
+
+The CLI parses the local input and authenticates directly with Slack. It does
+not open a browser. See [authentication](authentication.md) for standard token
+stdin and how to obtain a DevTools request locally.
 
 `slackcli --help`, and `slackcli <group> --help`, print the authoritative option
 list for the version you have installed.
@@ -32,7 +43,7 @@ list for the version you have installed.
 | `canvas` | List canvases and read them as Markdown |
 | `files` | Inspect, read, and download Slack-hosted files |
 | `emoji` | List a workspace's custom emoji and inspect one |
-| `update` | Check for and install new versions |
+| `update` | Offline explanation: upstream updates disabled |
 | `logs` | Find, show (redacted) and delete the diagnostic log |
 
 ## Pages

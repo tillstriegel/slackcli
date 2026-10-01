@@ -22,15 +22,15 @@ alongside a bot token for unattended jobs — name each login with `--profile`:
 ```bash
 # A user identity (browser auth)
 slackcli auth login-browser \
-  --xoxd=xoxd-... --xoxc=xoxc-... \
+  --tokens-stdin \
   --workspace-url=https://example.slack.com \
-  --profile=rafael
+  --profile=rafael < browser-tokens.json
 
 # A bot identity in the same workspace
 slackcli auth login \
-  --token=xoxb-... \
+  --token-stdin \
   --workspace-name=example \
-  --profile=automation-bot
+  --profile=automation-bot < token.txt
 ```
 
 Then select one anywhere `--workspace` is accepted:
@@ -46,8 +46,7 @@ slackcli messages send --recipient-id=C123 --message="Done" --workspace=automati
   existing configs and scripts are unaffected.
 - **Re-authenticating the same identity** (same team, same auth type, same user)
   refreshes its tokens in place — it keeps its key, its default status, and any
-  name you gave it. This is what makes `auth login-auto --headless` usable as a
-  token refresh.
+  name you gave it. Supply fresh tokens through the same stdin login path.
 - **A second identity without `--profile`** is saved under an auto-generated key
   such as `T1234567-2` rather than overwriting the first. The key that was used
   is printed after login.
@@ -101,7 +100,7 @@ Re-run with --workspace=<profile> (see "slackcli auth list").
 ```
 
 It holds live credentials, except for a profile stored with
-`"secret_backend": "keychain"` — there the token fields above are absent and
+`"secret_backend": "keychain"` — legacy profiles only; new Keychain writes are disabled. The token fields above are absent and
 the credentials live in the macOS Keychain instead. See
 [authentication: where credentials are stored](authentication.md#where-credentials-are-stored).
 Do not commit this file, sync it, or hand it around.

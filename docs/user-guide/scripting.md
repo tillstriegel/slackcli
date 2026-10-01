@@ -19,7 +19,7 @@ verbs (`members add`, `members remove`, `join`, `leave`) — where it returns th
 identity of what was just written instead of the human success line.
 
 JSON goes to **stdout**. Progress spinners, warnings, error messages, and the
-update-available notice go to **stderr**, so a pipe normally carries only data:
+optional diagnostic logs go to **stderr**, so a pipe normally carries only data:
 
 ```bash
 slackcli conversations read C1234567890 --json | jq '.messages[].text'
@@ -174,24 +174,18 @@ done
 
 ## Notes for unattended use
 
-- **Token freshness.** Browser tokens die with the browser session. Refresh them
-  non-interactively with `slackcli auth login-auto --headless`, which works once
-  the profile has been signed in once.
+- **Token freshness.** Browser tokens die with the browser session. Supply
+  fresh local stdin credentials or a fresh cURL request. `login-auto` is disabled.
 - **Throttling.** slackcli keeps at most 2 Slack API calls in flight and leaves
   at least 200ms between them, so it does not trip Slack's
   `unexpected_api_call_volume` anomaly detection. Commands that resolve many
   users or channels (`conversations unread`, `saved list` on a long list) make
   one API call per entity, so budget wall-clock time for them and set generous
   timeouts in a scheduled job.
-- **Logs.** Every command except `slackcli logs …` appends to a log file (see
-  [Troubleshooting](troubleshooting.md#logs)); nothing is written to stdout, and
-  stderr gets log lines only with `-v`. Set `SLACKCLI_LOG_LEVEL=off` to skip the
-  file, or `SLACKCLI_LOG_DIR` to move it, e.g. in a read-only container.
-- **The update notice.** SlackCLI may append a one-line "update available" notice
-  after a command. It goes to stderr and never contaminates `--json` on stdout.
-  Set `SLACKCLI_NO_UPDATE_NOTIFIER=1` to turn it and its daily request to GitHub
-  off; it is off automatically when `CI` is set (`CI=true`, `CI=1`). See
-  [Updating](installation.md#updating).
+- **Logs.** Logging is off by default. Opt in with `-v` or an explicit
+  `SLACKCLI_LOG_LEVEL`; logs stay on local disk/stderr. Review them before sharing.
+- **Updates.** No upstream update check, notice, cache or download runs in this
+  fork. Rebuild reviewed fork revisions locally.
 - **`usergroups` writes need `--yes`.** `create`, `update`, `add`, `remove`,
   `enable`, and `disable` refuse to run with a non-zero exit when stdin is not a
   terminal and `--yes` is absent, so an unattended job must pass `--yes`

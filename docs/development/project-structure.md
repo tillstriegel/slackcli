@@ -52,9 +52,11 @@ They hold no Slack API knowledge.
 | Module | Responsibility |
 |---|---|
 | `slack-client.ts` | The Slack API abstraction. Dispatches every call to `standardRequest()` or `browserRequest()` by auth type, through the shared rate limiter, retries browser-auth calls per `retry.ts`, and logs each attempt's method, auth type, duration and outcome. |
+| `slack-url-policy.ts` | Shared HTTPS Slack origin, file host, method and proxy policy. |
+| `credential-input.ts` | Standard and browser token parsing from local noninteractive stdin. |
 | `auth.ts` | Login orchestration; returns a configured `SlackClient`. The only place that decides a token is valid. |
 | `workspaces.ts` | Multi-workspace persistence, profile-key derivation and resolution. |
-| `secret-store.ts` | Credential storage seam: the `SecretStore` interface, the inline `FileSecretStore` and macOS `MacOSKeychainSecretStore` backends, `RoutingSecretStore`, and helpers that split a config into metadata and secrets. |
+| `secret-store.ts` | Credential storage seam: the `SecretStore` interface, the inline `FileSecretStore` and read/delete-only macOS `MacOSKeychainSecretStore` backend, `RoutingSecretStore`, and helpers that split a config into metadata and secrets. |
 | `browser-auth.ts` | Captures `xoxd`/`xoxc` from a signed-in browser; pure extractors are exported for tests. |
 | `browser-launcher.ts` | Finds and launches a local Chromium-family browser; owns the profile directory. |
 | `cdp-client.ts` | Minimal Chrome DevTools Protocol client over Bun's WebSocket. |

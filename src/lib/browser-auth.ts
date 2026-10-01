@@ -1,3 +1,4 @@
+import { canonicalWorkspaceOrigin } from './slack-url-policy.ts';
 /**
  * Capture Slack browser-session tokens by observing a real signed-in browser.
  *
@@ -57,15 +58,6 @@ type CaptureFailureResult = Extract<CaptureResult, { ok: false }>;
 const SLACK_API_URL = /^https:\/\/([\w-]+(?:\.enterprise)?)\.slack\.com\/api\//i;
 
 /**
- * The Slack web client's own host. It serves the app shell for every
- * workspace, so it is never itself a workspace origin — accepting it would
- * let a client-host API call masquerade as a distinct workspace and, since
- * workspaces are keyed by team id on save, overwrite the real entry's API
- * base with one that resolves to no particular team.
- */
-const SLACK_CLIENT_HOST = 'app.slack.com';
-
-/**
  * Gate every URL that will be paired with a session token.
  *
  * Load-bearing security boundary, not a tidiness check. Workspace URLs are
@@ -76,19 +68,7 @@ const SLACK_CLIENT_HOST = 'app.slack.com';
  * credential in cleartext.
  */
 export function isSlackWorkspaceUrl(candidate: string): boolean {
-  let parsed: URL;
-  try {
-    parsed = new URL(candidate);
-  } catch {
-    return false;
-  }
-  if (parsed.protocol !== 'https:') return false;
-
-  const host = parsed.hostname.toLowerCase();
-  if (host === SLACK_CLIENT_HOST) return false;
-  // Suffix match on a dot boundary — a plain `includes` would accept
-  // `notslack.com.evil.net`.
-  return host === 'slack.com' || host.endsWith('.slack.com');
+  try { canonicalWorkspaceOrigin(candidate); return true; } catch { return false; }
 }
 
 /**
@@ -233,9 +213,7 @@ function toCapturedWorkspace(entry: unknown): CapturedWorkspace | null {
  * `domain`.
  */
 function workspaceUrlForTeam(team: LocalConfigTeam): string | null {
-  // Reduce to an origin: Slack stores `https://team.slack.com/` but has also
-  // been seen carrying a path, and this value becomes the API base that
-  // every later request is built on.
+  // Raw stored origins use the same policy as manual and loaded credentials.
   if (typeof team.url === 'string' && team.url) return safeOrigin(team.url);
   if (typeof team.domain === 'string' && team.domain) {
     return `https://${encodeURIComponent(team.domain)}.slack.com`;
@@ -268,10 +246,10 @@ export function mergeWorkspaces(
   return [...byUrl.values()];
 }
 
-/** Origin of a URL, or null if it does not parse. */
+/** Validated workspace origin, or null when policy rejects it. */
 function safeOrigin(url: string): string | null {
   try {
-    return new URL(url).origin;
+    return canonicalWorkspaceOrigin(url);
   } catch {
     return null;
   }

@@ -14,7 +14,6 @@ import { createSearchCommand } from './commands/search.ts';
 import { createTeamCommand } from './commands/team.ts';
 import { createUsergroupsCommand } from './commands/usergroups.ts';
 import { createUsersCommand } from './commands/users.ts';
-import { notifyIfUpdateAvailable } from './lib/updater.ts';
 import { installUsageErrorLogging, startLogging } from './lib/logger.ts';
 import { installProcessErrorHandlers } from './lib/process-errors.ts';
 import { getAppVersion } from './version.ts';
@@ -23,10 +22,10 @@ const program = new Command();
 
 program
   .name('slackcli')
-  .description('A fast, developer-friendly CLI tool for interacting with Slack workspaces')
+  .description('SlackCLI privacy fork: direct Slack operations, local credentials, no upstream updater')
   .version(getAppVersion())
   // Reserved globally: no subcommand may define its own -v.
-  .option('-v, --verbose', 'Write debug logs to stderr (the log file is written either way)');
+  .option('-v, --verbose', 'Opt in to debug logs on stderr and local disk');
 
 // Logging is configured once, right before the chosen command runs, so help and
 // --version stay side-effect free. Libraries log through LogTape categories.
@@ -59,11 +58,6 @@ installUsageErrorLogging(program, {
   verbose: () => Boolean(program.opts().verbose),
   loggingStarted: () => loggingStarted,
 });
-
-// Show update notification after command output if a newer version is cached.
-// Not awaited on purpose: the notice prints from a `beforeExit` handler, and
-// awaiting would hold up the command on the background release check.
-void notifyIfUpdateAvailable();
 
 // Parse arguments
 program.parse(process.argv);

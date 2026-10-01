@@ -6,21 +6,24 @@ workspace on your behalf without you writing the commands.
 
 ## Install
 
-Inside Claude Code:
-
-```
-/plugin marketplace add shaharia-lab/slackcli
-/plugin install slackcli@slackcli
-```
+For this privacy fork, first build and verify the CLI from
+[reviewed fork source](installation.md). Upstream Homebrew packages, release
+binaries and marketplace plugins do not contain these privacy changes.
 
 The plugin lives at [`plugins/slackcli/`](../../plugins/slackcli/) in this
-repository. To try a local checkout instead of the published version:
+repository. Its inherited skill still describes upstream installation and
+automatic-login recovery. Review and adapt those instructions separately before
+using it with this fork; use local stdin authentication and keep the reviewed
+fork binary. To load a reviewed local checkout:
 
 ```bash
 claude --plugin-dir ./plugins/slackcli
 ```
 
 ## What the skill does
+
+The following describes the inherited upstream skill. Its Homebrew/release
+installation and `login-auto` recovery paths do not apply to this privacy fork.
 
 1. **Checks that `slackcli` is installed.** If it is missing, the skill asks
    before installing it, either through Homebrew or as a checksum-verified

@@ -1,7 +1,7 @@
 {
   "name": "slackcli",
-  "version": "0.13.0",
-  "description": "A fast, developer-friendly CLI tool for interacting with Slack workspaces",
+  "version": "0.13.0-till.1",
+  "description": "SlackCLI privacy fork with direct Slack transport and local credentials",
   "main": "src/index.ts",
   "type": "module",
   "scripts": {
@@ -42,6 +42,7 @@
     "bun": ">=1.4.1"
   },
   "overrides": {
-    "form-data": "^4.0.6"
+    "form-data": "^4.0.6",
+    "axios": "1.20.0"
   }
 }

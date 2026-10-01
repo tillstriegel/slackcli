@@ -315,11 +315,11 @@ describe('MacOSKeychainSecretStore', () => {
     expect(await store.get('T1:token')).toBeNull();
   });
 
-  it('writes with -U so a refresh updates in place rather than failing "already exists"', async () => {
+  it('refuses writes without putting the secret in subprocess argv', async () => {
     const { run, calls } = fakeRunner([ok()]);
     const store = new MacOSKeychainSecretStore(run, 'darwin');
-    await store.set('T1:token', 'xoxb-new');
-    expect(calls[0]).toEqual(['add-generic-password', '-a', 'T1:token', '-s', 'slackcli', '-w', 'xoxb-new', '-U']);
+    await expect(store.set('T1:token', 'xoxb-new')).rejects.toThrow('disabled');
+    expect(calls).toEqual([]);
   });
 
   it('treats deleting an absent item as success', async () => {
@@ -442,19 +442,11 @@ describe('secret-store logging', () => {
 
   const SECRET = ['xoxc', '7342581920', '7342581921', 'a1b2c3d4e5f6a7b8c9d0'].join('-');
 
-  it('logs an access_denied keychain write by reason and key, never the value', async () => {
+  it('refuses Keychain writes without logging the value or invoking security', async () => {
     const records = captureLogs();
-    const store = new MacOSKeychainSecretStore(
-      async () => ({ code: 51, stdout: '', stderr: 'security: write failed' }),
-      'darwin',
-    );
-
-    await expect(store.set('work:xoxc', SECRET)).rejects.toThrow(SecretStoreError);
-
-    const warning = records.find((r) => r.level === 'warning');
-    expect(warning?.category).toEqual(['slackcli', 'secret-store']);
-    expect(warning?.properties).toMatchObject({ action: 'write "work:xoxc"', reason: 'access_denied', exit_code: 51 });
-    expect(JSON.stringify(records.map((r) => [r.message, r.properties]))).not.toContain(SECRET);
+    const store = new MacOSKeychainSecretStore(async () => { throw new Error('must not run'); }, 'darwin');
+    await expect(store.set('work:xoxc', SECRET)).rejects.toThrow('disabled');
+    expect(JSON.stringify(records)).not.toContain(SECRET);
   });
 
   it('logs the keychain as unavailable off macOS', async () => {

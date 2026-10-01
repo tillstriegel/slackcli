@@ -1,3 +1,4 @@
+import { SLACK_TOKEN_PATTERN, SLACK_COOKIE_PATTERN } from './log-redaction.ts';
 import chalk from 'chalk';
 import type {
   SlackCanvas, SlackChannel, SlackMessage, SlackUser, WorkspaceConfig,
@@ -260,9 +261,9 @@ export function success(message: string): void {
 
 // Error message
 export function error(message: string, hint?: string): void {
-  console.error(chalk.red('❌ Error:'), message);
+  console.error(chalk.red('❌ Error:'), redactDiagnostic(message));
   if (hint) {
-    console.error(chalk.dim(`   ${hint}`));
+    console.error(chalk.dim(`   ${redactDiagnostic(hint)}`));
   }
 }
 
@@ -274,7 +275,7 @@ export function info(message: string): void {
 // Warning message. Written to stderr so diagnostics never contaminate stdout —
 // with --json, stdout must carry exactly one parseable object (see writeJson).
 export function warning(message: string): void {
-  console.error(chalk.yellow('⚠️'), message);
+  console.error(chalk.yellow('⚠️'), redactDiagnostic(message));
 }
 
 // Format saved items list
@@ -588,4 +589,11 @@ export function formatEmoji(emoji: CustomEmoji): string {
     }
   }
   return output;
+}
+
+// Diagnostics can contain transport failures or user-supplied option values.
+// Data output is unchanged; only error/warning text receives this safety net.
+function redactDiagnostic(message: string): string {
+  return message.replace(SLACK_TOKEN_PATTERN.pattern, '[REDACTED]')
+    .replace(SLACK_COOKIE_PATTERN.pattern, '[REDACTED]');
 }

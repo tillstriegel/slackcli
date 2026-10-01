@@ -55,6 +55,7 @@ concurrency:
 
 jobs:
   build:
+    if: github.repository == 'shaharia-lab/slackcli'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -93,6 +94,7 @@ jobs:
           path: web/dist
 
   deploy:
+    if: github.repository == 'shaharia-lab/slackcli'
     needs: build
     # A job-level `permissions:` block REPLACES the workflow-level one rather
     # than extending it, so nothing here inherits `contents: read` — it is

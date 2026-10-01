@@ -1,3 +1,5 @@
+> **Privacy fork (`0.13.0-till.1`)**: read [PRIVACY.md](PRIVACY.md). Automatic browser login and upstream updates are disabled. Logs are opt-in. Build this fork locally; upstream packages do not include these changes.
+
 <div align="center">
 
 <img src="assets/banner.png" alt="SlackCLI — the Slack CLI for humans and AI agents. Read, send, search and reply across one or many Slack workspaces from the terminal. No Slack app needed." width="1000">
@@ -45,93 +47,22 @@ https://github.com/user-attachments/assets/90cf1c89-2859-4b84-a731-b0ff3e1172f3
 
 ## ⚡ Quickstart
 
-Three steps, about a minute. Every platform in detail: [installation guide](https://slackcli.dev/docs/user-guide/installation/).
-
-<details open>
-<summary><b>1. Install</b> — pick your platform</summary>
-
-<br>
-
-**Homebrew** (macOS & Linux) — recommended
+Build the reviewed fork with Bun 1.4.1+:
 
 ```bash
-brew tap shaharia-lab/tap
-brew install slackcli
+bun install --frozen-lockfile --ignore-scripts
+bun run build
+./dist/slackcli --version
 ```
 
-<details>
-<summary>Linux — direct binary</summary>
+See the [fork installation guide](docs/user-guide/installation.md).
+Authenticate with local stdin:
 
 ```bash
-# x86_64
-curl -L https://github.com/shaharia-lab/slackcli/releases/latest/download/slackcli-linux -o slackcli
-
-# arm64
-curl -L https://github.com/shaharia-lab/slackcli/releases/latest/download/slackcli-linux-arm64 -o slackcli
-
-chmod +x slackcli && mkdir -p ~/.local/bin && mv slackcli ~/.local/bin/
+./dist/slackcli auth login --token-stdin --workspace-name="My Team" < token.txt
+# Or a saved browser DevTools request:
+./dist/slackcli auth parse-curl --login < curl-command.txt
 ```
-
-</details>
-
-<details>
-<summary>macOS — direct binary</summary>
-
-```bash
-# Intel
-curl -L https://github.com/shaharia-lab/slackcli/releases/latest/download/slackcli-macos -o slackcli
-
-# Apple Silicon
-curl -L https://github.com/shaharia-lab/slackcli/releases/latest/download/slackcli-macos-arm64 -o slackcli
-
-chmod +x slackcli && mkdir -p ~/.local/bin && mv slackcli ~/.local/bin/
-```
-
-</details>
-
-<details>
-<summary>Windows</summary>
-
-Download `slackcli-windows.exe` from the [latest release](https://github.com/shaharia-lab/slackcli/releases/latest)
-and put it somewhere on your `PATH`.
-
-</details>
-
-<details>
-<summary>From source (Bun)</summary>
-
-Requires Bun 1.4.1+.
-
-```bash
-git clone https://github.com/shaharia-lab/slackcli.git
-cd slackcli
-bun install
-bun run build        # -> ./dist/slackcli
-```
-
-</details>
-
-Every release ships `checksums.txt` — verify your download if you care to, and you should.
-Full details in the [installation guide](docs/user-guide/installation.md).
-
-</details>
-
-<details open>
-<summary><b>2. Sign in</b> — one command, no Slack app required</summary>
-
-<br>
-
-```bash
-slackcli auth login-auto
-```
-
-A browser opens, you sign into Slack as you normally would, and SlackCLI captures the
-session tokens for **every workspace on that account**. Nothing leaves your machine.
-
-Prefer a real Slack app token, or need a service account? There are three other ways —
-see [authentication](#-authentication-two-kinds-of-credentials) below.
-
-</details>
 
 <details open>
 <summary><b>3. Do something useful</b></summary>
@@ -139,12 +70,16 @@ see [authentication](#-authentication-two-kinds-of-credentials) below.
 <br>
 
 ```bash
-slackcli conversations unread                       # what did I miss?
-slackcli search messages "deploy failed" --in=engineering
-slackcli messages send --permalink="$LINK" --message="On it 👀"
+./dist/slackcli conversations unread                       # what did I miss?
+./dist/slackcli search messages "deploy failed" --in=engineering
+./dist/slackcli messages send --permalink="$LINK" --message="On it 👀"
 ```
 
 </details>
+
+Later examples use `slackcli` as shorthand for this verified fork binary.
+Until you explicitly install that artifact on PATH, use `./dist/slackcli`;
+never substitute an older or upstream installation.
 
 > [!TIP]
 > Anywhere SlackCLI wants a channel ID or a timestamp, you can paste a **Slack link**
@@ -217,24 +152,23 @@ flowchart LR
 ```
 
 <details>
-<summary><b>Four ways to sign in</b> — and which one to pick</summary>
+<summary><b>Local ways to sign in</b> — and which one to pick</summary>
 
 <br>
 
 | Method | Command | Best for |
 |---|---|---|
-| **Automatic browser login** | `slackcli auth login-auto` | Almost everyone. Sign in once, all workspaces enrolled. |
-| **Slack app token** | `slackcli auth login --token=xoxb-… --workspace-name="My Team"` | Bots, CI, service accounts, long-lived automation. |
-| **Parse a DevTools cURL** | `slackcli auth parse-curl --login` | Locked-down browsers, or when you already copied the request. |
-| **Browser tokens by hand** | `slackcli auth login-browser --xoxd=… --xoxc=… --workspace-url=…` | Full control, or scripted provisioning. |
+| **Automatic browser login** | `slackcli auth login-auto` | Disabled in this privacy fork. |
+| **Slack app token** | `slackcli auth login --token-stdin --workspace-name="My Team" < token.txt` | Bots, CI, service accounts, long-lived automation. |
+| **Parse a DevTools cURL** | `slackcli auth parse-curl --login < curl-command.txt` | Locked-down browsers, or when you already copied the request. |
+| **Browser tokens by hand** | `slackcli auth login-browser --tokens-stdin --workspace-url=https://team.slack.com < tokens.json` | Full control, or scripted provisioning. |
 
 Browser session tokens can create, list, send, and delete **drafts**, which a Slack app simply cannot do, and
 they back `saved list` and `conversations unread` with Slack's own native endpoints
 rather than approximations. Slack app tokens are more stable and survive a browser logout.
 
 `slackcli auth extract-tokens` prints the manual walkthrough.
-The security model, the OAuth scopes each command needs, and what `login-auto` does with
-your browser profile are all in the [authentication guide](docs/user-guide/authentication.md).
+The security model, the OAuth scopes each command needs, and the disabled automatic login policy are all in the [authentication guide](docs/user-guide/authentication.md).
 
 </details>
 
@@ -248,8 +182,8 @@ Configuration lives in `~/.config/slackcli/` (directory mode `0700`):
 | File | Contents |
 |---|---|
 | `workspaces.json` | Workspace credentials (mode `0600`) |
-| `update-check.json` | Cached update check, refreshed at most daily (off with `SLACKCLI_NO_UPDATE_NOTIFIER=1` or in CI) |
-| `browser-profile/` | The browser profile used by `auth login-auto` |
+| `update-check.json` | Legacy upstream cache; this fork does not read or update it |
+| `browser-profile/` | Legacy upstream profile; this fork does not launch it |
 
 `workspaces.json` and `browser-profile/` both hold **live credentials** — do not commit,
 sync, or share them. `slackcli auth logout` clears both.
@@ -270,7 +204,7 @@ for the version you have installed.
 
 | Command | Does |
 |---|---|
-| `auth login-auto` | Sign in through a browser; captures tokens automatically |
+| `auth login-auto` | Disabled in the privacy fork |
 | `auth login` | Sign in with a standard Slack app token (`xoxb-*` / `xoxp-*`) |
 | `auth login-browser` | Sign in with browser session tokens (`xoxd-*` + `xoxc-*`) |
 | `auth parse-curl` | Extract tokens from a cURL command copied out of DevTools |
@@ -357,8 +291,8 @@ slackcli canvas read F1234567890             # Canvas -> Markdown
 slackcli files info F1234567890
 slackcli files read F1234567890              # email plain_text or original text
 slackcli files download F1234567890 --output ./report.pdf
-slackcli update check                        # is there a newer version?
-slackcli update                              # install it
+slackcli update check                        # offline disabled-command explanation
+slackcli update                              # offline disabled-command explanation
 slackcli logs show --last 1                  # redacted diagnostic log of the last run
 ```
 

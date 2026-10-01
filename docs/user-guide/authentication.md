@@ -1,39 +1,26 @@
-# Authentication: browser session or Slack app token
+# Authentication in the privacy fork
 
-SlackCLI supports two kinds of credentials, and four ways to obtain them.
-
-| Auth type | Tokens | Obtained by | Best for |
-|---|---|---|---|
-| **Standard** | `xoxb-*` (bot) or `xoxp-*` (user) | Creating a Slack app | Unattended automation, CI, servers |
-| **Browser** | `xoxd-*` cookie + `xoxc-*` token | Reusing your own signed-in session | Personal use, no admin approval needed |
-
-The auth type is stored per workspace and decides how every later request is
-made — see [architecture](../development/architecture.md#dual-authentication).
-
-## Which should I use?
-
-- You can create (or already have) a Slack app → **standard tokens**. They are
-  stable, scoped, and do not expire with your browser session.
-- You cannot get a Slack app approved, or you want the CLI to act as *you* →
-  **browser tokens**, easiest via `auth login-auto`.
-
-A few features are browser-only, because Slack exposes no public API for them:
-draft creation and listing (`messages draft`, `messages list-drafts`), fast channel/people search
-(`search channels`, `search people` fall back to client-side filtering on
-standard auth), and fetching an arbitrary thread reply by timestamp alone
-(`conversations get`).
+Standard app tokens and browser session credentials are supported. Standard
+credentials use the Slack SDK; browser credentials use a validated Slack
+workspace origin. See [PRIVACY.md](../../PRIVACY.md) for the full policy.
 
 ## 1. Standard Slack app tokens
 
-Create an app at [api.slack.com/apps](https://api.slack.com/apps), add the OAuth
-scopes you need, install it to the workspace, and copy the token.
+Create a Slack app with the scopes required by your commands. Save its token
+in an owner-only local file, then read it through stdin:
 
 ```bash
-slackcli auth login --token=xoxb-YOUR-TOKEN --workspace-name="My Team"
+slackcli auth login --token-stdin --workspace-name="My Team" < token.txt
+# macOS, when the token is already on your local clipboard:
+pbpaste | slackcli auth login --token-stdin --workspace-name="My Team"
 ```
 
-The token is validated with `auth.test` before anything is saved, so a bad token
-fails immediately rather than at first use.
+The token is checked with Slack `auth.test` before storage. Do not write token
+values into shell commands or history. Legacy `--token` remains with a warning
+because it exposes the value in argv and shell history.
+Standard login accepts `xoxb-` and `xoxp-` access tokens, including rotated
+`xoxe.xoxb-` and `xoxe.xoxp-` forms. It refuses refresh tokens (`xoxe-`) and
+browser tokens. Rotation does not change the stored bot/user type.
 
 Useful scopes, by what you want to do:
 
@@ -47,167 +34,76 @@ Useful scopes, by what you want to do:
 | Search messages | `search:read` (user tokens only) |
 | Read canvases | `files:read` |
 
-## 2. Automatic browser login (easiest)
+## 2. Browser credentials from a local cURL request
+
+Copy a Slack API request from your own browser DevTools with **Copy as cURL**.
+Supply the saved request through stdin or explicitly read the clipboard:
 
 ```bash
-slackcli auth login-auto
-```
-
-A browser opens on Slack. Sign in as you normally would and SlackCLI captures
-the tokens — it enrols **every workspace you are signed into**, not just the one
-you opened.
-
-| Option | Purpose |
-|---|---|
-| `--workspace-url <url>` | Open a specific workspace instead of the Slack home |
-| `--timeout <seconds>` | How long to wait for sign-in (default `300`) |
-| `--headless` | No visible window; only works once you are already signed in |
-
-| Environment variable | Purpose |
-|---|---|
-| `SLACKCLI_BROWSER` | Path to a browser, if yours is not auto-detected |
-| `SLACKCLI_BROWSER_PROFILE` | Override the profile directory |
-
-**Requirements:** Chrome, Edge, Chromium, or Brave installed. Nothing is
-downloaded and no extra dependency is installed — SlackCLI drives the browser
-you already have, over the Chrome DevTools Protocol.
-
-**Why you sign in again the first time.** SlackCLI runs the browser against its
-own profile in `~/.config/slackcli/browser-profile`, separate from your everyday
-browsing. It has to: since Chrome 136 the browser refuses remote debugging
-against the default profile, so your existing session cannot be reused. The
-profile persists, so **only the first run needs interaction** — afterwards
-`slackcli auth login-auto --headless` refreshes tokens with no window and no
-prompt.
-
-**Security notes.**
-
-- Token values are never printed.
-- **The browser profile is a credential store.** While it exists, `login-auto`
-  can re-mint working tokens with no prompt. `slackcli auth logout` therefore
-  deletes it along with `workspaces.json`; pass `--keep-browser-session` to keep
-  it signed in.
-- Only `https://` URLs on a `slack.com` host are ever paired with your session
-  cookie — a URL read from the browser that points anywhere else is refused.
-- While the browser is open it exposes a DevTools port on loopback that any
-  local process could connect to. SlackCLI closes the browser as soon as capture
-  finishes, and also on `Ctrl-C` or termination.
-- Credentials land in `~/.config/slackcli/workspaces.json` (mode `0600`); the
-  profile directory is `0700` on macOS and Linux (Windows uses ACL defaults).
-
-Partial success is still success: if one captured workspace has a stale token,
-the others are still saved and the failure is reported.
-
-## 3. Parse a cURL command
-
-If you would rather not let SlackCLI drive a browser, copy one Slack API request
-out of DevTools and let it read the tokens from that.
-
-In DevTools → Network, right-click any Slack API request → **Copy** → **Copy as
-cURL**, then:
-
-```bash
-# Interactive: paste, then press Enter twice (or Ctrl-D)
-slackcli auth parse-curl --login
-
-# Straight from the clipboard
-slackcli auth parse-curl --from-clipboard --login
-
-# Piped
+slackcli auth parse-curl --login < curl-command.txt
 pbpaste | slackcli auth parse-curl --login
-cat curl-command.txt | slackcli auth parse-curl --login
+slackcli auth parse-curl --from-clipboard --login
 ```
 
-This extracts the workspace URL and name, the `xoxd` token from the cookie
-header, and the `xoxc` token from the request body. Drop `--login` to print what
-was found without saving it.
+The command extracts credentials locally. Without `--login`, it reports only
+safe workspace metadata and whether credentials were found. Credential values
+and prefixes are never displayed. Protect the request file like a token file.
+Interactive secret paste is disabled before the terminal starts reading it.
+Legacy positional cURL input warns about argv/history exposure.
 
-Clipboard reading uses `pbpaste` on macOS, PowerShell on Windows, and
-`xclip`/`xsel` on Linux — install one of those if the clipboard path fails.
+## 3. Manual browser token entry
 
-## 4. Browser session tokens by hand
+An owner-only local JSON file can contain `xoxd` and `xoxc` string fields:
 
 ```bash
-slackcli auth extract-tokens     # prints the step-by-step guide
-
-slackcli auth login-browser \
-  --xoxd=xoxd-YOUR-TOKEN \
-  --xoxc=xoxc-YOUR-TOKEN \
-  --workspace-url=https://yourteam.slack.com
+slackcli auth login-browser --tokens-stdin \
+  --workspace-url=https://yourteam.slack.com < browser-tokens.json
 ```
 
-Where the values come from: open your workspace in a browser, open DevTools
-(F12), go to Network, refresh or send a message, pick any Slack API request, and
-read `d=xoxd-…` from the `Cookie` header and `"token":"xoxc-…"` from the request
-payload.
+The workspace URL must be an HTTPS Slack workspace origin. Enterprise
+subdomains are supported. Paths, queries, fragments, userinfo, nondefault
+ports and `app.slack.com` are refused. A trailing root slash normalizes safely.
+Legacy `--xoxd`/`--xoxc` flags remain with a warning; prefer stdin.
 
-## Managing sessions
+Browser-only features include drafts and arbitrary thread-reply lookup.
+Standard tokens keep their normal read, search and message behavior, subject
+to Slack scopes and token-type restrictions.
 
-```bash
-slackcli auth list                        # every stored workspace, default marked
-slackcli auth set-default T1234567        # by profile, workspace ID, or name
-slackcli auth remove T1234567
-slackcli auth logout                      # clear all workspaces + browser profile
-slackcli auth logout --keep-browser-session
-```
+## Disabled automatic login
 
-Workspace metadata (workspace ID/name, auth type, profile) always lives in
-`~/.config/slackcli/workspaces.json` (mode `0600`, inside a `0700` directory).
-Where the *credentials* themselves live depends on the storage backend — see
-below. Nothing is sent anywhere except Slack.
+`auth login-auto` gives a clear error before any browser launch, capture,
+profile creation or network. Its old options cannot enable it. A regular
+browser can contact third parties during startup or SSO, so this fork does
+not automate that path.
 
 ## Where credentials are stored
 
-By default every credential (`xoxb`/`xoxp` token, or the `xoxc`/`xoxd` pair) is
-stored inline in `workspaces.json`, exactly as described above — this is the
-**file backend**, and it is still the default everywhere, including macOS.
-
-On macOS you can opt a profile into storing its credentials in the **macOS
-Keychain** instead, via `--secret-backend keychain` on any login path:
-
 ```bash
-slackcli auth login --token=xoxb-... --workspace-name="My Team" --secret-backend=keychain
-slackcli auth login-browser --xoxd=... --xoxc=... --workspace-url=https://... --secret-backend=keychain
-slackcli auth login-auto --secret-backend=keychain
-slackcli auth parse-curl --login --secret-backend=keychain
+slackcli auth list
+slackcli auth set-default T1234567
+slackcli auth remove T1234567
+slackcli auth logout
 ```
 
-`workspaces.json` still holds that profile's metadata, plus a
-`"secret_backend": "keychain"` marker — no token value. `auth list` shows which
-backend each profile uses. The flag only takes effect on a **new** profile; a
-token refresh of an existing profile (e.g. running `auth login` again for the
-same identity) keeps whatever backend it is already on, so an ordinary refresh
-never silently downgrades a Keychain profile back to plaintext.
+Profiles and default selection are preserved. `--profile <name>` works with
+both stdin login paths. Logout can clean an inherited SlackCLI browser
+profile; `--keep-browser-session` leaves it alone.
 
-**Move an existing profile to a different backend** with `auth migrate-secrets`:
+Credentials are stored locally as plaintext in `workspaces.json`, with POSIX
+file mode 0600 in a 0700 credential directory. Existing modes are repaired.
+Symlinked config paths and linked credential files are refused. These modes
+are not encryption and Windows also requires suitable ACLs.
+
+Keychain writes and migration **to** Keychain are disabled because the inherited
+write command exposes secrets in argv. Existing Keychain profiles retain their
+backend; refresh fails closed, with no silent plaintext fallback. Reading or
+removing existing profiles and explicit migration back to file remain available:
 
 ```bash
-slackcli auth migrate-secrets --to keychain --profile T1234567   # one profile
-slackcli auth migrate-secrets --to keychain                      # every profile
-slackcli auth migrate-secrets --to file --profile T1234567 --yes # back to file, unattended
+slackcli auth migrate-secrets --to file --profile T1234567 --yes
 ```
 
-Migration writes the credentials to the new backend, reads them back and
-verifies every byte matches, and only then removes the old copy — a failure at
-any point leaves the original untouched, so it is always safe to re-run.
-
-**Keychain requirements and limitations:**
-
-- macOS only; `--secret-backend keychain` is refused on every other platform,
-  and `auth migrate-secrets --to keychain` fails the same way.
-- Implemented by shelling out to the built-in `security` CLI (`security
-  add/find/delete-generic-password`, service `slackcli`) rather than an FFI
-  binding to Security.framework — the same trade-off `cdp-client.ts` makes
-  against Playwright, to avoid a new dependency and stay inside the 150MB
-  binary budget. One consequence: `security add-generic-password -w <value>`
-  has no way to pass the secret except as a command-line argument, so it is
-  briefly visible to other processes on the same host via `ps` while the write
-  is in flight (not persisted, not logged, but not hidden from a concurrently
-  running `ps` either). Keychain access itself may prompt for the login
-  password or Touch ID, per your Keychain Access settings for the item.
-- The Keychain is not a sandbox against another process running as your user —
-  it protects credentials at rest (other users, backups, casual file
-  inspection, syncing tools that read `~/.config`), not against something else
-  running as you.
+Logging is off by default; `-v` or an explicit `SLACKCLI_LOG_LEVEL` opts in.
+No real account authentication was used for the fork's tests.
 
 Next: [workspaces and profiles](workspaces.md).

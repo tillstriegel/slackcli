@@ -1,3 +1,4 @@
+import { canonicalWorkspaceOrigin } from './slack-url-policy.ts';
 /**
  * Curl command parser for extracting Slack authentication tokens
  */
@@ -40,14 +41,17 @@ export function parseCurlCommand(curlInput: string): ParsedCurlResult {
   // Extract workspace URL — domain can be myorg.slack.com or myorg.enterprise.slack.com
   // The URL is either positional (curl 'https://...') or behind the --url flag
   // (curl --url 'https://...'), which Chrome 151+ DevTools emits for "Copy as cURL".
-  const urlMatch = /(?:curl\s+|--url(?:\s+|=))['"]?(https?:\/\/([\w.-]+)\.slack\.com[^'"\s]*)/.exec(
-    curlInput
-  );
-  if (!urlMatch) {
-    throw new CurlParseError('workspace', 'Could not find Slack workspace URL in cURL command');
+  const urlMatch = /(?:curl\s+|--url(?:\s+|=))['"]?(https?:\/\/[^'"\s]+)/i.exec(curlInput);
+  let workspaceUrl: string;
+  try {
+    if (!urlMatch) throw new Error();
+    const raw = urlMatch[1];
+    const authority = /^https:\/\/[^/?#]+/i.exec(raw)?.[0];
+    if (!authority) throw new Error();
+    workspaceUrl = canonicalWorkspaceOrigin(authority);
+  } catch {
+    throw new CurlParseError('workspace', 'Could not find a safe Slack workspace URL in cURL command');
   }
-  const fullSubdomain = urlMatch[2];
-  const workspaceUrl = `https://${fullSubdomain}.slack.com`;
   const workspaceName = extractSlackWorkspaceName(workspaceUrl);
 
   // Extract xoxd token from cookie header

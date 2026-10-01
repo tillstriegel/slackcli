@@ -1,40 +1,12 @@
 import { Command } from 'commander';
-import { checkForUpdates, getUpdateHint, performUpdate, quoteCommand } from '../lib/updater.ts';
-import { success, error, info } from '../lib/formatter.ts';
+import { info } from '../lib/formatter.ts';
+import { UPDATES_DISABLED } from '../lib/updater.ts';
 
 export function createUpdateCommand(): Command {
+  const explain = () => { info(UPDATES_DISABLED); };
   const update = new Command('update')
-    .description('Check for and install updates')
-    .action(async () => {
-      try {
-        await performUpdate();
-      } catch (err: any) {
-        error('Update failed', err.message);
-        process.exit(1);
-      }
-    });
-
-  // Check for updates
-  update
-    .command('check')
-    .description('Check for available updates')
-    .action(async () => {
-      try {
-        const result = await checkForUpdates(false);
-
-        info(`Current version: v${result.currentVersion}`);
-
-        if (result.updateAvailable && result.latestVersion) {
-          info(`Latest version: ${result.latestVersion}`);
-          success(`Update available! Run ${getUpdateHint(quoteCommand)} to update.`);
-        } else {
-          success('You are on the latest version!');
-        }
-      } catch (err: any) {
-        error('Failed to check for updates', err.message);
-        process.exit(1);
-      }
-    });
-
+    .description('Disabled in the privacy fork (offline explanation only)')
+    .action(explain);
+  update.command('check').description('Disabled in the privacy fork').action(explain);
   return update;
 }

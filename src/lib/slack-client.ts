@@ -8,6 +8,7 @@ import type {
   SlackDraftListResponse,
   WorkspaceConfig,
 } from '../types/index.ts';
+import { assertNoSlackProxy, assertSlackMethod, canonicalWorkspaceOrigin, isSlackHost, slackFileUrl } from './slack-url-policy.ts';
 import { parseMrkdwn } from './mrkdwn.ts';
 import { extractSlackWorkspaceName } from './curl-parser.ts';
 import { RateLimiter, slackRateLimiter } from './rate-limiter.ts';
@@ -67,23 +68,21 @@ const defaultSleep = (ms: number): Promise<void> => new Promise((resolve) => set
 // data, which the log must never hold.
 function createSdkLogger(): SlackLogger {
   let level = SlackLogLevel.INFO;
-  let name = 'web-api';
-  const format = (msgs: unknown[]) => msgs.map((m) => (typeof m === 'string' ? m : String(m))).join(' ');
   return {
     debug: () => {},
-    info: (...msgs: unknown[]) => sdkLogger.info('{sdk}: {text}', { sdk: name, text: format(msgs) }),
-    warn: (...msgs: unknown[]) => sdkLogger.warn('{sdk}: {text}', { sdk: name, text: format(msgs) }),
-    error: (...msgs: unknown[]) => sdkLogger.error('{sdk}: {text}', { sdk: name, text: format(msgs) }),
+    info: () => sdkLogger.info('SDK transport event'),
+    warn: () => sdkLogger.warn('SDK transport warning'),
+    error: () => sdkLogger.error('SDK transport failure'),
     setLevel: (next: SlackLogLevel) => { level = next; },
     getLevel: () => level,
-    setName: (next: string) => { name = next; },
+    setName: () => {},
   };
 }
 
 // Slack's error code for a failed call, from whichever transport produced it.
 function slackErrorCode(error: any): string | undefined {
   const code = error?.slackData?.error;
-  return typeof code === 'string' && code ? code : undefined;
+  return typeof code === 'string' && /^[a-z][a-z0-9_]{0,80}$/.test(code) ? code : undefined;
 }
 
 // A short label for the failure log line: the Slack error code when there is
@@ -96,29 +95,11 @@ function failureReason(slackError: string | undefined, httpStatus: number | unde
 const FILE_REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 const MAX_FILE_REDIRECTS = 5;
 
-function isSlackHost(url: URL): boolean {
-  return url.hostname.toLowerCase().endsWith('.slack.com');
-}
-
-// Parse a file URL and refuse anything that is not HTTPS on a Slack host, so
-// credentials are never attached to the first request of a foreign URL.
-function assertSlackFileUrl(url: string): URL {
-  let parsedUrl: URL;
-  try {
-    parsedUrl = new URL(url);
-  } catch {
-    throw new Error('Download failed: invalid Slack file URL');
-  }
-  if (parsedUrl.protocol !== 'https:' || !isSlackHost(parsedUrl)) {
-    throw new Error('Download failed: URL is not hosted by Slack');
-  }
-  return parsedUrl;
-}
-
 function buildFileAuthHeaders(config: WorkspaceConfig): Record<string, string> {
   if (config.auth_type === 'standard') {
     return { Authorization: `Bearer ${config.token}` };
   }
+  canonicalWorkspaceOrigin(config.workspace_url);
   return {
     Cookie: `d=${encodeURIComponent(config.xoxd_token)}`,
     Origin: 'https://app.slack.com',
@@ -143,7 +124,7 @@ async function resolveRedirect(response: Response, currentUrl: URL): Promise<URL
   if (nextUrl.protocol !== 'https:') {
     throw new Error('Download failed: redirect destination is not secure');
   }
-  return nextUrl;
+  return slackFileUrl(location, true, currentUrl);
 }
 
 export class SlackClient {
@@ -161,7 +142,7 @@ export class SlackClient {
 
     // Only use WebClient for standard auth
     if (config.auth_type === 'standard') {
-      this.webClient = new WebClient(config.token, { logger: createSdkLogger() });
+      this.webClient = new WebClient(config.token, { logger: createSdkLogger(), slackApiUrl: 'https://slack.com/api/', allowAbsoluteUrls: false, attachOriginalToWebAPIRequestError: false });
     }
   }
 
@@ -184,6 +165,14 @@ export class SlackClient {
   // `Retry-After` does not stall every other call behind it. The standard path
   // is left to `@slack/web-api`, which retries by itself.
   async request(method: string, params: Record<string, any> = {}): Promise<any> {
+    assertSlackMethod(method);
+    // SDK uploadV2 follows server-provided URLs and reads files outside our
+    // upload policy. Refuse it and the legacy uploader before touching params.
+    if (method === 'files.uploadV2' || method === 'files.upload') {
+      throw new Error('Use uploadFileExternal instead of SDK file upload helpers');
+    }
+    assertNoSlackProxy();
+    if (this.config.auth_type === 'browser') canonicalWorkspaceOrigin(this.config.workspace_url);
     if (this.config.auth_type === 'standard') {
       return this.rateLimiter.run(() => this.attempt(method, params, 1));
     }
@@ -250,7 +239,6 @@ export class SlackClient {
         reason: failureReason(slackError, meta.httpStatus),
         http_status: meta.httpStatus,
         slack_error: slackError,
-        error_message: error?.message,
         duration_ms: Math.round(performance.now() - startedAt),
       });
       throw error;
@@ -263,6 +251,7 @@ export class SlackClient {
       throw new Error('WebClient not initialized');
     }
 
+    assertNoSlackProxy();
     try {
       const response = await this.webClient.apiCall(method, params);
       return response;
@@ -289,7 +278,7 @@ export class SlackClient {
       throw new Error('Invalid auth type');
     }
 
-    const url = `${this.config.workspace_url}/api/${method}`;
+    const url = `${canonicalWorkspaceOrigin(this.config.workspace_url)}/api/${method}`;
 
     const formParams: Record<string, string> = { token: this.config.xoxc_token };
     for (const [key, value] of Object.entries(params)) {
@@ -301,9 +290,11 @@ export class SlackClient {
     const encodedXoxdToken = encodeURIComponent(this.config.xoxd_token);
 
     let response: Response;
+    assertNoSlackProxy();
     try {
       response = await fetch(url, {
         method: 'POST',
+        redirect: 'manual',
         headers: {
           'Cookie': `d=${encodedXoxdToken}`,
           'Content-Type': 'application/x-www-form-urlencoded',
@@ -457,9 +448,13 @@ export class SlackClient {
       throw new Error('Slack API error: missing upload URL or file ID');
     }
 
+    const uploadUrl = slackFileUrl(uploadUrlResponse.upload_url);
+    assertNoSlackProxy();
     const fileBytes = await readFile(filePath);
     const uploadStartedAt = performance.now();
-    const uploadResponse = await fetch(uploadUrlResponse.upload_url, {
+    assertNoSlackProxy();
+    const uploadResponse = await fetch(uploadUrl, {
+      redirect: 'manual',
       method: 'POST',
       headers: {
         'Content-Type': 'application/octet-stream',
@@ -473,6 +468,7 @@ export class SlackClient {
     });
 
     if (!uploadResponse.ok) {
+      await uploadResponse.body?.cancel().catch(() => {});
       throw new Error(`File upload failed: HTTP ${uploadResponse.status}`);
     }
 
@@ -851,12 +847,14 @@ export class SlackClient {
   // Fetch a Slack-hosted file with the configured authentication. Returning the
   // response lets callers either buffer textual content or stream binary bytes.
   async fetchFile(url: string): Promise<Response> {
-    let currentUrl = assertSlackFileUrl(url);
+    let currentUrl = slackFileUrl(url, true);
+    assertNoSlackProxy();
     const authHeaders = buildFileAuthHeaders(this.config);
 
     for (let redirects = 0; redirects <= MAX_FILE_REDIRECTS; redirects += 1) {
       // Decided per hop: credentials go only to Slack hosts, never to a
       // redirected download host, and come back if a later hop returns to Slack.
+      assertNoSlackProxy();
       const response = await fetch(currentUrl, {
         headers: isSlackHost(currentUrl) ? authHeaders : {},
         redirect: 'manual',

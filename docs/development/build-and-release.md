@@ -207,43 +207,15 @@ If a tag was pushed with the wrong version, fix `package.json` on `main`, then
 delete and re-push the tag — the error message from `verify-version` says the
 same.
 
-## The self-updater
+## Privacy fork runtime and publication
 
-`src/lib/updater.ts` backs `slackcli update`. Four behaviours worth knowing
-before you change it:
+This fork has no upstream self-update implementation. `updater.ts` exposes
+offline compatibility functions; `update` and `update check` print the disabled
+policy. No background check, cache read/write or environment override exists.
 
-- It **fails closed** on verification: the release asset's digest must be a
-  `sha256:` digest published by GitHub and must match what was downloaded.
-  A missing or unexpected digest aborts the update rather than installing an
-  unverified binary.
-- It **refuses to act** when installed via Homebrew (detected from the exec path
-  containing `homebrew`, `Cellar`, or `linuxbrew`) or when running under Bun.
-- It **refuses before downloading** when `isInstallDirWritable()` finds the
-  binary's folder unwritable (replacing the binary renames inside that folder),
-  and `getUpdateCommand()` then suggests `sudo slackcli update` — on Windows the
-  command is unchanged and `getUpdateHint()` adds "from an Administrator
-  terminal". The notice, `update check` and the refusal message all build their
-  advice with `getUpdateHint()`; the notice builds it only when it prints. The Homebrew
-  check comes first. slackcli never elevates itself.
-  On Windows the check creates and removes a probe file, because `access(W_OK)`
-  there ignores folder ACLs and always reports a folder writable. Tests make a
-  folder unwritable with `chmod 0o555` and skip those cases as root or on
-  Windows, where mode bits do not apply.
-- The background check runs at most every 24 hours, caches to
-  `~/.config/slackcli/update-check.json`, and prints its notice to **stderr** on
-  `beforeExit` — so it never contaminates `--json` on stdout. Its GitHub lookup
-  is aborted after `BACKGROUND_CHECK_TIMEOUT_MS` (1.5 s; `update` / `update check`
-  use `FOREGROUND_CHECK_TIMEOUT_MS`, 10 s), a failure is recorded as `failedAt`
-  and suppresses retries for `RETRY_AFTER_FAILURE_MS` (1 h), and the notice uses
-  the version fetched in the same run when there is one, the cached one
-  otherwise. It is skipped
-  entirely for `update` and `update check`, which report versions themselves,
-  and a successful self-update rewrites the cache with the installed version so
-  the next run does not show a stale notice. It is also skipped entirely (no
-  cache read, no request, no notice) when `isUpdateNotifierDisabled()` finds
-  `SLACKCLI_NO_UPDATE_NOTIFIER` or `CI` set to anything but empty, `0` or
-  `false`. Tests point the cache at a temp directory with
-  `setUpdateCacheDirForTesting()`, never at the real `~/.config/slackcli`, and
-  pass an explicit `env` (e.g. `{}`) to `notifyIfUpdateAvailable()`: CI runners
-  set `CI`, so a test that relies on `process.env` would silently skip its
-  assertions there.
+Release, Homebrew, Pages and Sonar jobs have an original-repository guard.
+They do not publish inherited destinations from this fork. Unit-test failures
+block `test.yml`. The CLI version comes from `package.json` (`0.13.0-till.1`).
+The exact Axios 1.20.0 override is lockfile-bound; all development installs use
+`--ignore-scripts`, including frozen verification installs. No real account,
+Keychain or browser session is needed for testing. See [PRIVACY.md](../../PRIVACY.md).

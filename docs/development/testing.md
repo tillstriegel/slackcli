@@ -111,3 +111,19 @@ To produce the same coverage report locally, run
 which is git-ignored.
 
 See [build and release](build-and-release.md).
+
+## Privacy fork verification
+
+Run with the pinned Bun and a throwaway HOME/TMPDIR. `privacy-hardening.test.ts`
+exercises browser and SDK transport boundaries with fake credentials, including
+unsafe origins/methods, redirects, upload validation and proxy rejection.
+`sdk-http-transport.test.ts` keeps the SDK's selected Axios HTTP adapter and
+intercepts Node HTTP requests with writable/readable streams in an isolated
+process. It checks credentialed redirect refusal and proxy suppression without
+creating sockets; it does not test real TLS, DNS or live Slack behavior.
+`privacy-auth.test.ts` tests real CLI stdin/output against intercepted network;
+`workspace-security.test.ts` tests modes and linked-path rejection. Explicit log
+tests opt in. No real Slack, Keychain, clipboard or browser profile is used.
+The removed updater/capture orchestration is replaced by offline refusal tests;
+retained browser helper tests use fake transports. Inherited Sonar jobs are
+original-repository-only. Test job failures are no longer masked.
